@@ -35,6 +35,7 @@ func (d *DB) migrate() error {
 	_, err := d.conn.Exec(`
 		CREATE TABLE IF NOT EXISTS notes (
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			title      TEXT    NOT NULL DEFAULT '',
 			content    TEXT    NOT NULL DEFAULT '',
 			tags       TEXT    NOT NULL DEFAULT '[]',
 			images     TEXT    NOT NULL DEFAULT '[]',
@@ -64,8 +65,9 @@ func (d *DB) migrate() error {
 	if err != nil {
 		return err
 	}
-	// Migrate existing DBs without files / credentials columns
+	// Migrate existing DBs — ignore errors if column already exists
 	_, _ = d.conn.Exec(`ALTER TABLE notes ADD COLUMN files TEXT NOT NULL DEFAULT '[]'`)
+	_, _ = d.conn.Exec(`ALTER TABLE notes ADD COLUMN title TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -110,8 +112,8 @@ func (d *DB) CreateNote(req model.CreateNoteReq) (*model.Note, error) {
 	tagsJSON, _ := json.Marshal(req.Tags)
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := d.conn.Exec(
-		`INSERT INTO notes (content, tags, images, files, pinned, created_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
-		req.Content, string(tagsJSON), "[]", "[]", boolToInt(req.Pinned), now, now,
+		`INSERT INTO notes (title, content, tags, images, files, pinned, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)`,
+		req.Title, req.Content, string(tagsJSON), "[]", "[]", boolToInt(req.Pinned), now, now,
 	)
 	if err != nil {
 		return nil, err
@@ -121,7 +123,7 @@ func (d *DB) CreateNote(req model.CreateNoteReq) (*model.Note, error) {
 }
 
 func (d *DB) GetNote(id int64) (*model.Note, error) {
-	row := d.conn.QueryRow(`SELECT id, content, tags, images, files, pinned, created_at, updated_at FROM notes WHERE id=?`, id)
+	row := d.conn.QueryRow(`SELECT id, title, content, tags, images, files, pinned, created_at, updated_at FROM notes WHERE id=?`, id)
 	return scanNote(row)
 }
 
@@ -129,8 +131,8 @@ func (d *DB) UpdateNote(id int64, req model.UpdateNoteReq) (*model.Note, error) 
 	tagsJSON, _ := json.Marshal(req.Tags)
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := d.conn.Exec(
-		`UPDATE notes SET content=?, tags=?, pinned=?, updated_at=? WHERE id=?`,
-		req.Content, string(tagsJSON), boolToInt(req.Pinned), now, id,
+		`UPDATE notes SET title=?, content=?, tags=?, pinned=?, updated_at=? WHERE id=?`,
+		req.Title, req.Content, string(tagsJSON), boolToInt(req.Pinned), now, id,
 	)
 	if err != nil {
 		return nil, err
@@ -218,20 +220,20 @@ func (d *DB) ListNotes(opts ListOpts) (*ListResult, error) {
 	if opts.Query != "" {
 		q := "%" + opts.Query + "%"
 		rows, err = d.conn.Query(`
-			SELECT id, content, tags, images, files, pinned, created_at, updated_at FROM notes
-			WHERE content LIKE ?
-			ORDER BY pinned DESC, created_at DESC LIMIT ? OFFSET ?`, q, opts.Limit, offset)
-		countRow = d.conn.QueryRow(`SELECT COUNT(*) FROM notes WHERE content LIKE ?`, q)
+			SELECT id, title, content, tags, images, files, pinned, created_at, updated_at FROM notes
+			WHERE content LIKE ? OR title LIKE ?
+			ORDER BY pinned DESC, created_at DESC LIMIT ? OFFSET ?`, q, q, opts.Limit, offset)
+		countRow = d.conn.QueryRow(`SELECT COUNT(*) FROM notes WHERE content LIKE ? OR title LIKE ?`, q, q)
 	} else if opts.Tag != "" {
 		rows, err = d.conn.Query(`
-			SELECT id, content, tags, images, files, pinned, created_at, updated_at FROM notes
+			SELECT id, title, content, tags, images, files, pinned, created_at, updated_at FROM notes
 			WHERE tags LIKE ?
 			ORDER BY pinned DESC, created_at DESC LIMIT ? OFFSET ?`,
 			"%\""+opts.Tag+"\"%", opts.Limit, offset)
 		countRow = d.conn.QueryRow(`SELECT COUNT(*) FROM notes WHERE tags LIKE ?`, "%\""+opts.Tag+"\"%")
 	} else {
 		rows, err = d.conn.Query(`
-			SELECT id, content, tags, images, files, pinned, created_at, updated_at FROM notes
+			SELECT id, title, content, tags, images, files, pinned, created_at, updated_at FROM notes
 			ORDER BY pinned DESC, created_at DESC LIMIT ? OFFSET ?`, opts.Limit, offset)
 		countRow = d.conn.QueryRow(`SELECT COUNT(*) FROM notes`)
 	}
@@ -285,7 +287,7 @@ func (d *DB) AllTags() ([]string, error) {
 }
 
 func (d *DB) ExportAll() ([]model.Note, error) {
-	rows, err := d.conn.Query(`SELECT id, content, tags, images, files, pinned, created_at, updated_at FROM notes ORDER BY created_at DESC`)
+	rows, err := d.conn.Query(`SELECT id, title, content, tags, images, files, pinned, created_at, updated_at FROM notes ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +310,7 @@ func scanNote(s *sql.Row) (*model.Note, error) {
 	var n model.Note
 	var tagsJSON, imagesJSON, filesJSON, createdAt, updatedAt string
 	var pinned int
-	if err := s.Scan(&n.ID, &n.Content, &tagsJSON, &imagesJSON, &filesJSON, &pinned, &createdAt, &updatedAt); err != nil {
+	if err := s.Scan(&n.ID, &n.Title, &n.Content, &tagsJSON, &imagesJSON, &filesJSON, &pinned, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	json.Unmarshal([]byte(tagsJSON), &n.Tags)
@@ -317,15 +319,9 @@ func scanNote(s *sql.Row) (*model.Note, error) {
 	n.Pinned = pinned == 1
 	n.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	n.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	if n.Tags == nil {
-		n.Tags = []string{}
-	}
-	if n.Images == nil {
-		n.Images = []string{}
-	}
-	if n.Files == nil {
-		n.Files = []model.Attachment{}
-	}
+	if n.Tags == nil   { n.Tags = []string{} }
+	if n.Images == nil { n.Images = []string{} }
+	if n.Files == nil  { n.Files = []model.Attachment{} }
 	return &n, nil
 }
 
@@ -333,7 +329,7 @@ func scanNoteRows(s *sql.Rows) (*model.Note, error) {
 	var n model.Note
 	var tagsJSON, imagesJSON, filesJSON, createdAt, updatedAt string
 	var pinned int
-	if err := s.Scan(&n.ID, &n.Content, &tagsJSON, &imagesJSON, &filesJSON, &pinned, &createdAt, &updatedAt); err != nil {
+	if err := s.Scan(&n.ID, &n.Title, &n.Content, &tagsJSON, &imagesJSON, &filesJSON, &pinned, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	json.Unmarshal([]byte(tagsJSON), &n.Tags)
@@ -342,15 +338,9 @@ func scanNoteRows(s *sql.Rows) (*model.Note, error) {
 	n.Pinned = pinned == 1
 	n.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	n.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	if n.Tags == nil {
-		n.Tags = []string{}
-	}
-	if n.Images == nil {
-		n.Images = []string{}
-	}
-	if n.Files == nil {
-		n.Files = []model.Attachment{}
-	}
+	if n.Tags == nil   { n.Tags = []string{} }
+	if n.Images == nil { n.Images = []string{} }
+	if n.Files == nil  { n.Files = []model.Attachment{} }
 	return &n, nil
 }
 
