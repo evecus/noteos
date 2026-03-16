@@ -16,7 +16,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/noteos/noteos/internal/api"
@@ -96,9 +95,6 @@ func main() {
 	})
 
 	app.Use(recover.New())
-	app.Use(logger.New(logger.Config{
-		Format: "${time} ${method} ${path} ${status} ${latency}\n",
-	}))
 	app.Use(cors.New())
 
 	// ── 上传目录 ───────────────────────────────────────────
@@ -233,16 +229,17 @@ func makeStatusHandler(database *db.DB) fiber.Handler {
 	}
 }
 
-// authMiddleware 保护所有路由（/api/auth/* 和 /login 已在前面注册，不会走到这里）
+// authMiddleware 保护所有路由。
+// 放行：/api/auth/*、/login、/static/*（登录页需要加载 CSS 和图标）
 func authMiddleware(c *fiber.Ctx) error {
 	path := c.Path()
-	// 放行认证相关路径
-	if strings.HasPrefix(path, "/api/auth/") || path == "/login" {
+	if strings.HasPrefix(path, "/api/auth/") ||
+		path == "/login" ||
+		strings.HasPrefix(path, "/static/") {
 		return c.Next()
 	}
 	sess, err := sessionStore.Get(c)
 	if err != nil || sess.Get("user") == nil {
-		// API 请求返回 401 JSON，页面请求重定向到登录页
 		if strings.HasPrefix(path, "/api/") {
 			return c.Status(401).JSON(fiber.Map{"error": "未登录"})
 		}
