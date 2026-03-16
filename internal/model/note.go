@@ -12,6 +12,7 @@ type Attachment struct {
 
 type Note struct {
 	ID        int64        `json:"id"`
+	Title     string       `json:"title"`   // optional, empty = no title shown
 	Content   string       `json:"content"`
 	Tags      []string     `json:"tags"`
 	Pinned    bool         `json:"pinned"`
@@ -22,12 +23,14 @@ type Note struct {
 }
 
 type CreateNoteReq struct {
+	Title   string   `json:"title"`
 	Content string   `json:"content"`
 	Tags    []string `json:"tags"`
 	Pinned  bool     `json:"pinned"`
 }
 
 type UpdateNoteReq struct {
+	Title   string   `json:"title"`
 	Content string   `json:"content"`
 	Tags    []string `json:"tags"`
 	Pinned  bool     `json:"pinned"`
