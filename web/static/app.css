@@ -1278,3 +1278,56 @@ body.sidebar-open #sidebar {
   #note-modal.nm-visible { transform: translateY(0); }
   #write-fab { bottom: max(24px, calc(var(--safe-bottom) + 18px)); right: 20px; }
 }
+
+/* ===================================================
+   TITLE — card + modal
+   =================================================== */
+
+/* Card title */
+.note-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.4;
+  margin-bottom: 6px;
+  word-break: break-word;
+  /* one line with ellipsis on card */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Title input in modal */
+#nm-title {
+  width: 100%;
+  border: none;
+  border-bottom: 1.5px solid var(--border);
+  border-radius: 0;
+  padding: 4px 0 10px;
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--font);
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  transition: border-color .15s;
+  letter-spacing: -.01em;
+}
+#nm-title::placeholder {
+  color: var(--text3);
+  font-weight: 400;
+  font-size: 18px;
+}
+#nm-title:focus { border-bottom-color: var(--accent); }
+
+/* Title in preview (view mode) */
+.nm-preview-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+  margin-bottom: 14px;
+  word-break: break-word;
+  letter-spacing: -.01em;
+}

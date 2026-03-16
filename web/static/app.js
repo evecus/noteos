@@ -98,6 +98,8 @@ function createNoteCard(note) {
     `<span class="tag-badge" onclick="event.stopPropagation();filterByTag('${escHtml(t)}')">#${escHtml(t)}</span>`
   ).join('');
   const renderedMd = marked.parse(note.content||'', {breaks:true,gfm:true});
+  const titleHtml = note.title
+    ? `<div class="note-card-title">${escHtml(note.title)}</div>` : '';
 
   // Image thumbnails from files
   const imgFiles = (note.files||[]).filter(f=>f.mime&&f.mime.startsWith('image/'));
@@ -118,6 +120,7 @@ function createNoteCard(note) {
       <span>${date}</span>
       ${hasAttach ? '<span class="att-badge" title="有附件"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" fill="currentColor"/></svg></span>' : ''}
     </div>
+    ${titleHtml}
     <div class="note-content">${renderedMd}</div>
     ${imgsHtml ? `<div class="note-images">${imgsHtml}</div>` : ''}
     ${tagsHtml ? `<div class="note-tags">${tagsHtml}</div>` : ''}
@@ -242,6 +245,14 @@ function _applyModalMode(mode, note) {
   // Pin
   $nm('nm-pin').checked = note?.pinned || false;
 
+  // Title
+  if (isWriting) {
+    $nm('nm-title').value = note?.title || '';
+    _showEl('nm-title');
+  } else {
+    _hideEl('nm-title');
+  }
+
   // Body
   if (isWriting) {
     _showEl('nm-textarea'); _hideEl('nm-preview');
@@ -250,7 +261,8 @@ function _applyModalMode(mode, note) {
   } else {
     _hideEl('nm-textarea','nm-drop-zone');
     _showEl('nm-preview');
-    $nm('nm-preview').innerHTML = marked.parse(note?.content||'');
+    const titleHtml = note?.title ? `<div class="nm-preview-title">${escHtml(note.title)}</div>` : '';
+    $nm('nm-preview').innerHTML = titleHtml + marked.parse(note?.content||'');
     $nm('nm-preview').dataset.rawContent = note?.content||'';
   }
 
@@ -297,6 +309,7 @@ function closeModal() {
 async function saveModal() {
   const content = $nm('nm-textarea').value.trim();
   if (!content) { toast('内容不能为空'); return; }
+  const title  = $nm('nm-title').value.trim();
   const pinned = $nm('nm-pin').checked;
   const tags   = state.modal.tags;
   const btn    = $nm('nm-save-btn');
@@ -304,7 +317,7 @@ async function saveModal() {
 
   try {
     if (state.modal.mode === 'new') {
-      const note = await api.post('/notes', { content, tags, pinned });
+      const note = await api.post('/notes', { title, content, tags, pinned });
       for (const f of state.modal.pendingFiles) {
         try { await api.uploadFile(note.id, f); } catch(e) { toast('文件上传失败: '+e.message); }
       }
@@ -318,7 +331,7 @@ async function saveModal() {
       toast('✅ 笔记已保存');
     } else {
       const id = state.modal.noteId;
-      await api.put(`/notes/${id}`, { content, tags, pinned });
+      await api.put(`/notes/${id}`, { title, content, tags, pinned });
       const fresh = await api.get(`/notes/${id}`);
       const idx = state.notes.findIndex(n=>n.id===id);
       if (idx>=0) state.notes[idx] = fresh;
