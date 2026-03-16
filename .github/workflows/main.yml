@@ -13,7 +13,8 @@ env:
 
 jobs:
   # ────────────────────────────────────────────
-  # Step 1: generate the time-based tag once
+  # Step 1: generate the time-based tag once,
+  # share it with all downstream jobs via output
   # ────────────────────────────────────────────
   tag:
     name: Generate tag
@@ -39,19 +40,52 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ── Linux x86_64 ───────────────────
+          # ── Linux ──────────────────────────
           - goos: linux
             goarch: amd64
             runner: ubuntu-latest
             cc: ''
             apt: ''
 
-          # ── Linux ARM64 (树莓派等) ──────────
           - goos: linux
             goarch: arm64
             runner: ubuntu-latest
             cc: aarch64-linux-gnu-gcc
             apt: gcc-aarch64-linux-gnu
+
+          - goos: linux
+            goarch: arm
+            goarm: '7'
+            runner: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            apt: gcc-arm-linux-gnueabihf
+
+          - goos: linux
+            goarch: mipsle
+            gomips: softfloat
+            runner: ubuntu-latest
+            cc: mipsel-linux-gnu-gcc
+            apt: gcc-mipsel-linux-gnu
+
+          # ── macOS (native CGO) ─────────────
+          - goos: darwin
+            goarch: amd64
+            runner: macos-13        # Intel runner
+            cc: ''
+            apt: ''
+
+          - goos: darwin
+            goarch: arm64
+            runner: macos-14        # Apple Silicon runner
+            cc: ''
+            apt: ''
+
+          # ── Windows ────────────────────────
+          - goos: windows
+            goarch: amd64
+            runner: ubuntu-latest
+            cc: x86_64-w64-mingw32-gcc
+            apt: gcc-mingw-w64-x86-64
 
     steps:
       - name: Checkout
@@ -63,11 +97,14 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install cross-compiler
+      - name: Install cross-compiler (Linux runners only)
         if: matrix.apt != ''
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Download dependencies
+        run: go mod tidy
 
       - name: Compute output filename
         id: fname
@@ -92,11 +129,9 @@ jobs:
           CGO_ENABLED: 1
           CC:         ${{ matrix.cc }}
         run: |
-          # 关键点：如果仓库里缺少 go.sum，这里会自动生成并下载依赖
-          go mod tidy
-          
           mkdir -p dist
           go build \
+            -tags fts5 \
             -ldflags="-s -w -X main.version=${{ needs.tag.outputs.tag }}" \
             -trimpath \
             -o "dist/${{ steps.fname.outputs.name }}" \
@@ -111,17 +146,17 @@ jobs:
           if-no-files-found: error
 
   # ────────────────────────────────────────────
-  # Step 3: create GitHub Release
+  # Step 3: create GitHub Release and attach all binaries
   # ────────────────────────────────────────────
   release:
     name: Publish Release
     needs: [tag, build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # required to create tags + releases
 
     steps:
-      - name: Checkout
+      - name: Checkout (needed to create the tag)
         uses: actions/checkout@v4
 
       - name: Download all binaries
@@ -160,17 +195,30 @@ jobs:
           chmod +x noteos-linux-amd64
           ./noteos-linux-amd64
 
+          # 带密码保护
+          ./noteos-linux-amd64 --password yourpassword
+
           # 自定义端口和数据目录
-          ./noteos-linux-amd64 --port 2344 --data ./data
+          ./noteos-linux-amd64 --port 2344 --data /var/lib/noteos
           \`\`\`
+
+          访问 http://localhost:2344
 
           ### 各平台文件
 
           | 文件 | 平台 |
           |------|------|
-          | \`noteos-linux-amd64\` | Linux x86_64 |
-          | \`noteos-linux-arm64\` | Linux ARM64 |
+          | \`noteos-linux-amd64\` | Linux x86_64（服务器/VPS） |
+          | \`noteos-linux-arm64\` | Linux ARM64（树莓派 4/5、NAS） |
+          | \`noteos-linux-arm-armv7\` | Linux ARMv7（树莓派 3、软路由） |
+          | \`noteos-linux-mipsle\` | OpenWrt MIPS soft-float（MT7621 等） |
+          | \`noteos-darwin-amd64\` | macOS Intel |
+          | \`noteos-darwin-arm64\` | macOS Apple Silicon |
+          | \`noteos-windows-amd64.exe\` | Windows 64 位 |
           BODY
+
+          echo "Generated body.md"
+          cat body.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
