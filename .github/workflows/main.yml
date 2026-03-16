@@ -145,7 +145,7 @@ jobs:
           FROM alpine:3.19
           RUN apk add --no-cache ca-certificates tzdata
           ARG TARGETARCH
-          COPY ${TARGETARCH}/noteos-linux-${TARGETARCH} /noteos
+          COPY noteos-linux-${TARGETARCH} /noteos
           RUN chmod +x /noteos
           ENV NOTEOS_AUTH=""
           EXPOSE 2344
@@ -153,6 +153,12 @@ jobs:
           ENTRYPOINT ["/noteos"]
           CMD ["--dir", "/data", "--port", "2344"]
           EOF
+
+      - name: Flatten binaries into docker context
+        run: |
+          cp docker/amd64/noteos-linux-amd64 docker/noteos-linux-amd64
+          cp docker/arm64/noteos-linux-arm64 docker/noteos-linux-arm64
+          ls -lh docker/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -173,8 +179,7 @@ jobs:
           file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: |
-            TARGETARCH
+          provenance: false
           tags: |
             ${{ secrets.USER }}/noteos:${{ needs.tag.outputs.tag }}
             ${{ secrets.USER }}/noteos:latest
@@ -201,6 +206,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: bin-*
           merge-multiple: true
 
       - name: Show binaries
