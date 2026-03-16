@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -10,12 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/basicauth"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/noteos/noteos/internal/api"
 	"github.com/noteos/noteos/internal/db"
 	"golang.org/x/crypto/bcrypt"
@@ -25,6 +28,9 @@ import (
 var webFS embed.FS
 
 var version = "dev"
+
+// sessionStore is the global session store (in-memory, sufficient for single-user).
+var sessionStore *session.Store
 
 func main() {
 	var (
@@ -57,13 +63,22 @@ func main() {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
 
-	// ── 处理密码：存入 / 更新 DB（bcrypt 哈希） ────────────
+	// ── 存储凭据 ───────────────────────────────────────────
 	if authUser != "" {
 		if err := database.SetCredential(authUser, authPass); err != nil {
 			log.Fatalf("保存登录信息失败: %v", err)
 		}
 		log.Printf("🔒 已启用登录保护  用户名: %s", authUser)
 	}
+
+	// ── Session Store（内存，24h 过期） ────────────────────
+	sessionStore = session.New(session.Config{
+		Expiration:   24 * time.Hour,
+		CookieName:   "noteos_sid",
+		CookieSecure: false, // 局域网 HTTP 也能用
+		CookieHTTPOnly: true,
+		CookieSameSite: "Lax",
+	})
 
 	h := api.NewHandler(database, *dir)
 
@@ -86,30 +101,31 @@ func main() {
 	}))
 	app.Use(cors.New())
 
-	// ── Basic Auth 中间件：从 DB 验证 bcrypt 哈希 ──────────
-	// 只要 DB 里存有凭据就启用（无论本次启动是否传 --auth）
-	if database.HasCredential() {
-		app.Use(basicauth.New(basicauth.Config{
-			Authorizer: func(user, pass string) bool {
-				hash, err := database.GetCredentialHash(user)
-				if err != nil {
-					return false
-				}
-				return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pass)) == nil
-			},
-			Unauthorized: func(c *fiber.Ctx) error {
-				c.Set("WWW-Authenticate", `Basic realm="NoteOS"`)
-				return c.Status(fiber.StatusUnauthorized).SendString("请输入用户名和密码")
-			},
-		}))
-	}
-
-	// ── 静态文件：上传目录 ─────────────────────────────────
+	// ── 上传目录 ───────────────────────────────────────────
 	uploadsDir := filepath.Join(*dir, "uploads")
 	os.MkdirAll(uploadsDir, 0755)
+
+	// ── 登录 / 登出 API（无需认证） ────────────────────────
+	app.Post("/api/auth/login", makeLoginHandler(database))
+	app.Post("/api/auth/logout", makeLogoutHandler())
+	app.Get("/api/auth/status", makeStatusHandler(database))
+
+	// ── 登录页静态资源（无需认证） ─────────────────────────
+	app.Get("/login", serveLogin)
+	app.Get("/static/login.css", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/css")
+		data, _ := webFS.ReadFile("web/static/login.css")
+		return c.Send(data)
+	})
+
+	// ── 认证中间件（只在 DB 有凭据时启用） ────────────────
+	if database.HasCredential() {
+		app.Use(authMiddleware)
+	}
+
+	// ── 上传目录 & Web UI（需认证） ────────────────────────
 	app.Static("/uploads", uploadsDir)
 
-	// ── 嵌入的 Web UI ──────────────────────────────────────
 	webSub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -162,3 +178,87 @@ func main() {
 	log.Fatal(app.Listen(addr))
 }
 
+// ── Auth handlers ──────────────────────────────────────────────────────────
+
+func makeLoginHandler(database *db.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "参数错误"})
+		}
+		hash, err := database.GetCredentialHash(body.Username)
+		if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)) != nil {
+			// 固定延迟防止枚举
+			time.Sleep(300 * time.Millisecond)
+			return c.Status(401).JSON(fiber.Map{"error": "用户名或密码错误"})
+		}
+		// 生成 session
+		sess, err := sessionStore.Get(c)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "session 错误"})
+		}
+		token := randomToken()
+		sess.Set("user", body.Username)
+		sess.Set("token", token)
+		if err := sess.Save(); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "session 保存失败"})
+		}
+		return c.JSON(fiber.Map{"ok": true, "username": body.Username})
+	}
+}
+
+func makeLogoutHandler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sess, _ := sessionStore.Get(c)
+		sess.Destroy()
+		return c.JSON(fiber.Map{"ok": true})
+	}
+}
+
+func makeStatusHandler(database *db.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// 无凭据 = 未开启保护
+		if !database.HasCredential() {
+			return c.JSON(fiber.Map{"protected": false})
+		}
+		sess, _ := sessionStore.Get(c)
+		user := sess.Get("user")
+		if user == nil {
+			return c.JSON(fiber.Map{"protected": true, "loggedIn": false})
+		}
+		return c.JSON(fiber.Map{"protected": true, "loggedIn": true, "username": user})
+	}
+}
+
+// authMiddleware 保护所有路由（/api/auth/* 和 /login 已在前面注册，不会走到这里）
+func authMiddleware(c *fiber.Ctx) error {
+	path := c.Path()
+	// 放行认证相关路径
+	if strings.HasPrefix(path, "/api/auth/") || path == "/login" {
+		return c.Next()
+	}
+	sess, err := sessionStore.Get(c)
+	if err != nil || sess.Get("user") == nil {
+		// API 请求返回 401 JSON，页面请求重定向到登录页
+		if strings.HasPrefix(path, "/api/") {
+			return c.Status(401).JSON(fiber.Map{"error": "未登录"})
+		}
+		return c.Redirect("/login", fiber.StatusFound)
+	}
+	return c.Next()
+}
+
+func serveLogin(c *fiber.Ctx) error {
+	c.Set("Content-Type", "text/html")
+	data, _ := webFS.ReadFile("web/login.html")
+	return c.Send(data)
+}
+
+func randomToken() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
