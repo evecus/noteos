@@ -286,8 +286,11 @@ func (d *DB) AllTags() ([]string, error) {
 	return result, nil
 }
 
-func (d *DB) ExportAll() ([]model.Note, error) {
-	rows, err := d.conn.Query(`SELECT id, title, content, tags, images, files, pinned, created_at, updated_at FROM notes ORDER BY created_at DESC`)
+func (d *DB) ExportAll(limit int) ([]model.Note, error) {
+	rows, err := d.conn.Query(
+		`SELECT id, title, content, tags, images, files, pinned, created_at, updated_at FROM notes ORDER BY created_at DESC LIMIT ?`,
+		limit,
+	)
 	if err != nil {
 		return nil, err
 	}
