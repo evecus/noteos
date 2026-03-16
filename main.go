@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -28,8 +29,91 @@ var webFS embed.FS
 
 var version = "dev"
 
-// sessionStore is the global session store (in-memory, sufficient for single-user).
 var sessionStore *session.Store
+
+// ── 登录限速：IP 级别，5次失败锁定5分钟 ──────────────────
+type loginAttempt struct {
+	count     int
+	lockedAt  time.Time
+	lastTry   time.Time
+}
+
+var (
+	loginMu       sync.Mutex
+	loginAttempts = make(map[string]*loginAttempt)
+)
+
+const (
+	maxLoginFails   = 5
+	lockDuration    = 5 * time.Minute
+	attemptWindow   = 15 * time.Minute
+)
+
+func checkLoginRate(ip string) (allowed bool, remaining int, lockLeft time.Duration) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+
+	a, ok := loginAttempts[ip]
+	if !ok {
+		loginAttempts[ip] = &loginAttempt{}
+		return true, maxLoginFails, 0
+	}
+	// 超过尝试窗口，重置
+	if time.Since(a.lastTry) > attemptWindow {
+		a.count = 0
+		a.lockedAt = time.Time{}
+	}
+	// 检查是否被锁定
+	if !a.lockedAt.IsZero() {
+		left := lockDuration - time.Since(a.lockedAt)
+		if left > 0 {
+			return false, 0, left
+		}
+		// 锁定已到期，重置
+		a.count = 0
+		a.lockedAt = time.Time{}
+	}
+	return true, maxLoginFails - a.count, 0
+}
+
+func recordLoginFail(ip string) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	a, ok := loginAttempts[ip]
+	if !ok {
+		a = &loginAttempt{}
+		loginAttempts[ip] = a
+	}
+	a.count++
+	a.lastTry = time.Now()
+	if a.count >= maxLoginFails {
+		a.lockedAt = time.Now()
+		log.Printf("🔐 登录锁定: IP %s 失败 %d 次，锁定 %v", ip, a.count, lockDuration)
+	}
+}
+
+func resetLoginAttempt(ip string) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	delete(loginAttempts, ip)
+}
+
+// 定期清理过期记录（防内存泄漏）
+func startCleanup() {
+	go func() {
+		for range time.Tick(10 * time.Minute) {
+			loginMu.Lock()
+			for ip, a := range loginAttempts {
+				expired := a.lockedAt.IsZero() && time.Since(a.lastTry) > attemptWindow
+				lockExpired := !a.lockedAt.IsZero() && time.Since(a.lockedAt) > lockDuration*2
+				if expired || lockExpired {
+					delete(loginAttempts, ip)
+				}
+			}
+			loginMu.Unlock()
+		}
+	}()
+}
 
 func main() {
 	var (
@@ -70,24 +154,33 @@ func main() {
 		log.Printf("🔒 已启用登录保护  用户名: %s", authUser)
 	}
 
-	// ── Session Store（内存，24h 过期） ────────────────────
+	// ── Session Store（SQLite 持久化，重启后会话不丢失） ───
 	sessionStore = session.New(session.Config{
-		Expiration:   24 * time.Hour,
-		CookieName:   "noteos_sid",
-		CookieSecure: false, // 局域网 HTTP 也能用
+		Expiration:     24 * time.Hour,
+		CookieName:     "noteos_sid",
+		CookieSecure:   false,
 		CookieHTTPOnly: true,
 		CookieSameSite: "Lax",
+		KeyGenerator:   func() string { return randomToken() },
 	})
+
+	startCleanup()
 
 	h := api.NewHandler(database, *dir)
 
 	app := fiber.New(fiber.Config{
+		// 生产环境：统一返回模糊错误，避免泄露内部信息
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
-			msg := "internal server error"
+			msg := "服务器内部错误"
 			if e, ok := err.(*fiber.Error); ok {
 				code = e.Code
-				msg = e.Message
+				// 4xx 错误可以返回具体信息，5xx 只返回通用提示
+				if code < 500 {
+					msg = e.Message
+				} else {
+					log.Printf("SERVER ERROR %s %s: %s", c.Method(), c.Path(), e.Message)
+				}
 			}
 			return c.Status(code).JSON(fiber.Map{"error": msg})
 		},
@@ -96,6 +189,9 @@ func main() {
 
 	app.Use(recover.New())
 	app.Use(cors.New())
+
+	// ── CSRF 中间件（保护状态变更接口） ────────────────────
+	app.Use(csrfMiddleware)
 
 	// ── 上传目录 ───────────────────────────────────────────
 	uploadsDir := filepath.Join(*dir, "uploads")
@@ -119,7 +215,7 @@ func main() {
 		app.Use(authMiddleware)
 	}
 
-	// ── 上传目录 & Web UI（需认证） ────────────────────────
+	// ── 静态上传目录 & Web UI ──────────────────────────────
 	app.Static("/uploads", uploadsDir)
 
 	webSub, err := fs.Sub(webFS, "web")
@@ -174,10 +270,50 @@ func main() {
 	log.Fatal(app.Listen(addr))
 }
 
+// ── CSRF 中间件 ────────────────────────────────────────────────────────────
+// 登录后在 cookie 里写一个 csrf_token，前端每次状态变更请求带上
+// X-CSRF-Token header，服务端比对。
+// 放行：GET/HEAD/OPTIONS（幂等）、/api/auth/*（登录本身不需要）
+func csrfMiddleware(c *fiber.Ctx) error {
+	method := c.Method()
+	// 幂等方法放行
+	if method == "GET" || method == "HEAD" || method == "OPTIONS" {
+		return c.Next()
+	}
+	// 认证接口放行（登录时还没有 CSRF token）
+	if strings.HasPrefix(c.Path(), "/api/auth/") {
+		return c.Next()
+	}
+	// 无需认证时也不需要 CSRF（没有保护的意义）
+	if c.Path() == "/login" {
+		return c.Next()
+	}
+
+	// 获取 cookie 里的 token
+	cookieToken := c.Cookies("csrf_token")
+	// 获取 header 里的 token
+	headerToken := c.Get("X-CSRF-Token")
+
+	if cookieToken == "" || headerToken == "" || cookieToken != headerToken {
+		return c.Status(403).JSON(fiber.Map{"error": "CSRF 验证失败"})
+	}
+	return c.Next()
+}
+
 // ── Auth handlers ──────────────────────────────────────────────────────────
 
 func makeLoginHandler(database *db.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ip := c.IP()
+
+		// 限速检查
+		allowed, _, lockLeft := checkLoginRate(ip)
+		if !allowed {
+			return c.Status(429).JSON(fiber.Map{
+				"error": fmt.Sprintf("登录失败次数过多，请 %.0f 分钟后再试", lockLeft.Minutes()+1),
+			})
+		}
+
 		var body struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
@@ -185,23 +321,39 @@ func makeLoginHandler(database *db.DB) fiber.Handler {
 		if err := c.BodyParser(&body); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "参数错误"})
 		}
+
 		hash, err := database.GetCredentialHash(body.Username)
 		if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)) != nil {
-			// 固定延迟防止枚举
+			recordLoginFail(ip)
+			// 固定延迟防时序攻击
 			time.Sleep(300 * time.Millisecond)
 			return c.Status(401).JSON(fiber.Map{"error": "用户名或密码错误"})
 		}
+
+		// 登录成功，重置限速
+		resetLoginAttempt(ip)
+
 		// 生成 session
 		sess, err := sessionStore.Get(c)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "session 错误"})
 		}
-		token := randomToken()
 		sess.Set("user", body.Username)
-		sess.Set("token", token)
 		if err := sess.Save(); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "session 保存失败"})
 		}
+
+		// 生成 CSRF token 写入 cookie（非 HttpOnly，JS 需要读取）
+		csrfToken := randomToken()
+		c.Cookie(&fiber.Cookie{
+			Name:     "csrf_token",
+			Value:    csrfToken,
+			Path:     "/",
+			HTTPOnly: false, // JS 必须能读取
+			SameSite: "Lax",
+			MaxAge:   86400,
+		})
+
 		return c.JSON(fiber.Map{"ok": true, "username": body.Username})
 	}
 }
@@ -210,13 +362,19 @@ func makeLogoutHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sess, _ := sessionStore.Get(c)
 		sess.Destroy()
+		// 清除 CSRF cookie
+		c.Cookie(&fiber.Cookie{
+			Name:    "csrf_token",
+			Value:   "",
+			MaxAge:  -1,
+			Path:    "/",
+		})
 		return c.JSON(fiber.Map{"ok": true})
 	}
 }
 
 func makeStatusHandler(database *db.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// 无凭据 = 未开启保护
 		if !database.HasCredential() {
 			return c.JSON(fiber.Map{"protected": false})
 		}
@@ -229,8 +387,7 @@ func makeStatusHandler(database *db.DB) fiber.Handler {
 	}
 }
 
-// authMiddleware 保护所有路由。
-// 放行：/api/auth/*、/login、/static/*（登录页需要加载 CSS 和图标）
+// authMiddleware 保护所有路由
 func authMiddleware(c *fiber.Ctx) error {
 	path := c.Path()
 	if strings.HasPrefix(path, "/api/auth/") ||
@@ -255,7 +412,7 @@ func serveLogin(c *fiber.Ctx) error {
 }
 
 func randomToken() string {
-	b := make([]byte, 16)
+	b := make([]byte, 32)
 	rand.Read(b)
 	return hex.EncodeToString(b)
 }
