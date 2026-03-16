@@ -163,8 +163,8 @@ jobs:
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
-          username: ${{ vars.user }}
-          password: ${{ secrets.password }}
+          username: ${{ vars.USER }}
+          password: ${{ secrets.PASSWORD }}
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v6
@@ -176,8 +176,8 @@ jobs:
           build-args: |
             TARGETARCH
           tags: |
-            ${{ vars.user }}/noteos:${{ needs.tag.outputs.tag }}
-            ${{ vars.user }}/noteos:latest
+            ${{ vars.USER }}/noteos:${{ needs.tag.outputs.tag }}
+            ${{ vars.USER }}/noteos:latest
           labels: |
             org.opencontainers.image.version=${{ needs.tag.outputs.tag }}
             org.opencontainers.image.revision=${{ github.sha }}
