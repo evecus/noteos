@@ -7,6 +7,12 @@ const state = {
 };
 
 /* ===== API ===== */
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim())
+    .find(c => c.startsWith('csrf_token='))
+    ?.split('=')[1] || '';
+}
+
 const api = {
   async get(path) {
     const r = await fetch('/api/v1' + path);
@@ -14,27 +20,45 @@ const api = {
     return r.json();
   },
   async post(path, body) {
-    const r = await fetch('/api/v1' + path, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const r = await fetch('/api/v1' + path, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
+      body: JSON.stringify(body)
+    });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
   async put(path, body) {
-    const r = await fetch('/api/v1' + path, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const r = await fetch('/api/v1' + path, {
+      method:'PUT',
+      headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
+      body: JSON.stringify(body)
+    });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
   async del(path) {
-    const r = await fetch('/api/v1' + path, { method:'DELETE' });
+    const r = await fetch('/api/v1' + path, {
+      method:'DELETE',
+      headers:{'X-CSRF-Token':getCsrfToken()}
+    });
     if (!r.ok) throw new Error(await r.text());
   },
   async uploadFile(noteId, file) {
     const fd = new FormData(); fd.append('file', file);
-    const r = await fetch(`/api/v1/notes/${noteId}/files`, { method:'POST', body: fd });
+    const r = await fetch(`/api/v1/notes/${noteId}/files`, {
+      method:'POST',
+      headers:{'X-CSRF-Token':getCsrfToken()},
+      body: fd
+    });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
   async deleteFile(noteId, filename) {
-    const r = await fetch(`/api/v1/notes/${noteId}/files/${encodeURIComponent(filename)}`, { method:'DELETE' });
+    const r = await fetch(`/api/v1/notes/${noteId}/files/${encodeURIComponent(filename)}`, {
+      method:'DELETE',
+      headers:{'X-CSRF-Token':getCsrfToken()}
+    });
     if (!r.ok) throw new Error(await r.text());
   }
 };
