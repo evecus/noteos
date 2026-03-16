@@ -63,6 +63,7 @@ html, body {
   height: 28px;
   border-radius: 7px;
   flex-shrink: 0;
+  display: block;
 }
 
 /* ===== Sidebar (desktop) ===== */
