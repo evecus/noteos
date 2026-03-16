@@ -53,39 +53,6 @@ jobs:
             cc: aarch64-linux-gnu-gcc
             apt: gcc-aarch64-linux-gnu
 
-          - goos: linux
-            goarch: arm
-            goarm: '7'
-            runner: ubuntu-latest
-            cc: arm-linux-gnueabihf-gcc
-            apt: gcc-arm-linux-gnueabihf
-
-          - goos: linux
-            goarch: mipsle
-            gomips: softfloat
-            runner: ubuntu-latest
-            cc: mipsel-linux-gnu-gcc
-            apt: gcc-mipsel-linux-gnu
-
-          # ── macOS (native CGO) ─────────────
-          - goos: darwin
-            goarch: amd64
-            runner: macos-13        # Intel runner
-            cc: ''
-            apt: ''
-
-          - goos: darwin
-            goarch: arm64
-            runner: macos-14        # Apple Silicon runner
-            cc: ''
-            apt: ''
-
-          # ── Windows ────────────────────────
-          - goos: windows
-            goarch: amd64
-            runner: ubuntu-latest
-            cc: x86_64-w64-mingw32-gcc
-            apt: gcc-mingw-w64-x86-64
 
     steps:
       - name: Checkout
