@@ -38,9 +38,13 @@ func (h *Handler) ListNotes(c *fiber.Ctx) error {
 		Page:  c.QueryInt("page", 1),
 		Limit: c.QueryInt("limit", 20),
 	}
+	// 限制每页最多 100 条，防止一次性读取过多
+	if opts.Limit > 100 {
+		opts.Limit = 100
+	}
 	result, err := h.db.ListNotes(opts)
 	if err != nil {
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "查询失败")
 	}
 	return c.JSON(result)
 }
@@ -48,17 +52,17 @@ func (h *Handler) ListNotes(c *fiber.Ctx) error {
 func (h *Handler) CreateNote(c *fiber.Ctx) error {
 	var req model.CreateNoteReq
 	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(400, "invalid request")
+		return fiber.NewError(400, "请求格式错误")
 	}
 	if strings.TrimSpace(req.Content) == "" {
-		return fiber.NewError(400, "content cannot be empty")
+		return fiber.NewError(400, "内容不能为空")
 	}
 	if req.Tags == nil {
 		req.Tags = []string{}
 	}
 	note, err := h.db.CreateNote(req)
 	if err != nil {
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "创建失败")
 	}
 	return c.Status(201).JSON(note)
 }
@@ -66,11 +70,11 @@ func (h *Handler) CreateNote(c *fiber.Ctx) error {
 func (h *Handler) GetNote(c *fiber.Ctx) error {
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil {
-		return fiber.NewError(400, "invalid id")
+		return fiber.NewError(400, "无效的 ID")
 	}
 	note, err := h.db.GetNote(id)
 	if err != nil {
-		return fiber.NewError(404, "note not found")
+		return fiber.NewError(404, "笔记不存在")
 	}
 	return c.JSON(note)
 }
@@ -78,18 +82,18 @@ func (h *Handler) GetNote(c *fiber.Ctx) error {
 func (h *Handler) UpdateNote(c *fiber.Ctx) error {
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil {
-		return fiber.NewError(400, "invalid id")
+		return fiber.NewError(400, "无效的 ID")
 	}
 	var req model.UpdateNoteReq
 	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(400, "invalid request")
+		return fiber.NewError(400, "请求格式错误")
 	}
 	if req.Tags == nil {
 		req.Tags = []string{}
 	}
 	note, err := h.db.UpdateNote(id, req)
 	if err != nil {
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "更新失败")
 	}
 	return c.JSON(note)
 }
@@ -97,9 +101,8 @@ func (h *Handler) UpdateNote(c *fiber.Ctx) error {
 func (h *Handler) DeleteNote(c *fiber.Ctx) error {
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil {
-		return fiber.NewError(400, "invalid id")
+		return fiber.NewError(400, "无效的 ID")
 	}
-	// Remove all associated files from disk
 	note, _ := h.db.GetNote(id)
 	if note != nil {
 		for _, img := range note.Images {
@@ -110,7 +113,7 @@ func (h *Handler) DeleteNote(c *fiber.Ctx) error {
 		}
 	}
 	if err := h.db.DeleteNote(id); err != nil {
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "删除失败")
 	}
 	return c.SendStatus(204)
 }
@@ -221,7 +224,7 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 
 	if err := h.db.AddFile(id, att); err != nil {
 		os.Remove(dest)
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "保存文件记录失败")
 	}
 
 	return c.Status(201).JSON(fiber.Map{
@@ -268,7 +271,7 @@ func (h *Handler) DeleteFile(c *fiber.Ctx) error {
 
 	os.Remove(filepath.Join(h.dataDir, "uploads", filename))
 	if err := h.db.RemoveFile(id, filename); err != nil {
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "删除失败")
 	}
 	return c.SendStatus(204)
 }
@@ -315,7 +318,7 @@ func (h *Handler) UploadImage(c *fiber.Ctx) error {
 func (h *Handler) ListTags(c *fiber.Ctx) error {
 	tags, err := h.db.AllTags()
 	if err != nil {
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "查询失败")
 	}
 	if tags == nil {
 		tags = []string{}
@@ -324,12 +327,16 @@ func (h *Handler) ListTags(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ExportMarkdown(c *fiber.Ctx) error {
-	notes, err := h.db.ExportAll()
+	// 限制导出数量，防止内存耗尽
+	const exportLimit = 500
+	notes, err := h.db.ExportAll(exportLimit)
 	if err != nil {
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "导出失败")
 	}
 
 	var buf bytes.Buffer
+	// 预分配合理大小，减少扩容
+	buf.Grow(len(notes) * 512)
 	zw := zip.NewWriter(&buf)
 
 	for _, note := range notes {
@@ -342,6 +349,9 @@ func (h *Handler) ExportMarkdown(c *fiber.Ctx) error {
 		var sb strings.Builder
 		sb.WriteString("---\n")
 		sb.WriteString(fmt.Sprintf("id: %d\n", note.ID))
+		if note.Title != "" {
+			sb.WriteString(fmt.Sprintf("title: %s\n", note.Title))
+		}
 		sb.WriteString(fmt.Sprintf("created: %s\n", note.CreatedAt.Format(time.RFC3339)))
 		sb.WriteString(fmt.Sprintf("updated: %s\n", note.UpdatedAt.Format(time.RFC3339)))
 		if len(note.Tags) > 0 {
@@ -351,6 +361,9 @@ func (h *Handler) ExportMarkdown(c *fiber.Ctx) error {
 			sb.WriteString("pinned: true\n")
 		}
 		sb.WriteString("---\n\n")
+		if note.Title != "" {
+			sb.WriteString("# " + note.Title + "\n\n")
+		}
 		sb.WriteString(note.Content)
 		sb.WriteString("\n")
 
@@ -372,6 +385,9 @@ func (h *Handler) ExportMarkdown(c *fiber.Ctx) error {
 
 	c.Set("Content-Type", "application/zip")
 	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=noteos_export_%s.zip", time.Now().Format("20060102_150405")))
+	if len(notes) == exportLimit {
+		c.Set("X-Export-Truncated", fmt.Sprintf("true (max %d)", exportLimit))
+	}
 	return c.Send(buf.Bytes())
 }
 
