@@ -129,7 +129,10 @@ func main() {
 		os.Exit(0)
 	}
 
-	// ── 解析 --auth user:pass ──────────────────────────────
+	// ── 解析 --auth user:pass，优先用环境变量 NOTEOS_AUTH ──
+	if *auth == "" {
+		*auth = os.Getenv("NOTEOS_AUTH")
+	}
 	var authUser, authPass string
 	if *auth != "" {
 		parts := strings.SplitN(*auth, ":", 2)
