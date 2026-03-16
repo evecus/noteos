@@ -16,7 +16,32 @@
 <div id="app">
   <aside id="sidebar">
     <div class="logo">
-      <img src="/static/icon.svg" class="logo-img" alt="NoteOS"/>
+      <svg class="logo-img" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="lg-s" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#5B63D3"/>
+            <stop offset="100%" stop-color="#7C4FC5"/>
+          </linearGradient>
+          <clipPath id="cp-s"><rect width="512" height="512" rx="112"/></clipPath>
+        </defs>
+        <g clip-path="url(#cp-s)">
+          <rect width="512" height="512" fill="url(#lg-s)"/>
+          <rect x="100" y="88" width="308" height="342" rx="28" fill="white" fill-opacity=".96"/>
+          <polygon points="306,88 408,88 408,168" fill="#DDD8FF" fill-opacity=".55"/>
+          <rect x="138" y="198" width="176" height="11" rx="5.5" fill="#5C63D3" fill-opacity=".55"/>
+          <rect x="138" y="224" width="228" height="8" rx="4" fill="#5C63D3" fill-opacity=".28"/>
+          <rect x="138" y="246" width="196" height="8" rx="4" fill="#5C63D3" fill-opacity=".25"/>
+          <rect x="138" y="268" width="214" height="8" rx="4" fill="#5C63D3" fill-opacity=".22"/>
+          <rect x="138" y="308" width="158" height="8" rx="4" fill="#5C63D3" fill-opacity=".22"/>
+          <g transform="translate(256,256) rotate(-38) translate(-256,-256)">
+            <rect x="245" y="148" width="22" height="18" rx="4" fill="#D8D8D8"/>
+            <rect x="249" y="153" width="14" height="8" rx="2" fill="#FF8080" fill-opacity=".75"/>
+            <rect x="245" y="166" width="22" height="122" rx="3" fill="#FFD166"/>
+            <polygon points="245,288 267,288 256,324" fill="#F0A742"/>
+            <polygon points="250,316 262,316 256,332" fill="#2A2A2A"/>
+          </g>
+        </g>
+      </svg>
       <span class="logo-text">NoteOS</span>
     </div>
     <nav>
@@ -54,7 +79,27 @@
       <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
     </button>
     <div class="mobile-logo">
-      <img src="/static/icon.svg" alt="NoteOS"/>
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" style="width:26px;height:26px;border-radius:6px;flex-shrink:0">
+        <defs>
+          <linearGradient id="lg-m" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#5B63D3"/>
+            <stop offset="100%" stop-color="#7C4FC5"/>
+          </linearGradient>
+          <clipPath id="cp-m"><rect width="512" height="512" rx="112"/></clipPath>
+        </defs>
+        <g clip-path="url(#cp-m)">
+          <rect width="512" height="512" fill="url(#lg-m)"/>
+          <rect x="100" y="88" width="308" height="342" rx="28" fill="white" fill-opacity=".96"/>
+          <polygon points="306,88 408,88 408,168" fill="#DDD8FF" fill-opacity=".55"/>
+          <rect x="138" y="198" width="176" height="11" rx="5.5" fill="#5C63D3" fill-opacity=".55"/>
+          <rect x="138" y="224" width="228" height="8" rx="4" fill="#5C63D3" fill-opacity=".28"/>
+          <g transform="translate(256,256) rotate(-38) translate(-256,-256)">
+            <rect x="245" y="166" width="22" height="122" rx="3" fill="#FFD166"/>
+            <polygon points="245,288 267,288 256,324" fill="#F0A742"/>
+            <polygon points="250,316 262,316 256,332" fill="#2A2A2A"/>
+          </g>
+        </g>
+      </svg>
       <span>NoteOS</span>
     </div>
     <button id="mobile-search-btn" onclick="toggleMobileSearch()" aria-label="搜索">
