@@ -13,7 +13,7 @@ env:
 
 jobs:
   # ──────────────────────────────────────────
-  # Step 1: 生成时间 tag，所有后续 job 共用
+  # Step 1: 生成时间 tag
   # ──────────────────────────────────────────
   tag:
     name: Generate tag
@@ -29,7 +29,7 @@ jobs:
           echo "Generated tag: ${TAG}"
 
   # ──────────────────────────────────────────
-  # Step 2: 多平台编译（矩阵）
+  # Step 2: 多平台静态编译
   # ──────────────────────────────────────────
   build:
     name: Build · ${{ matrix.goos }}/${{ matrix.goarch }}
@@ -42,8 +42,8 @@ jobs:
           - goos: linux
             goarch: amd64
             runner: ubuntu-latest
-            cc: ''
-            apt: ''
+            cc: gcc
+            apt: build-essential
 
           - goos: linux
             goarch: arm64
@@ -62,7 +62,6 @@ jobs:
           cache: true
 
       - name: Install cross-compiler
-        if: matrix.apt != ''
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ${{ matrix.apt }}
@@ -75,32 +74,27 @@ jobs:
         shell: bash
         run: |
           NAME="noteos-${{ matrix.goos }}-${{ matrix.goarch }}"
-          if [[ "${{ matrix.goarm }}" != "" ]]; then
-            NAME="${NAME}-armv${{ matrix.goarm }}"
-          fi
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            NAME="${NAME}.exe"
-          fi
           echo "name=${NAME}" >> $GITHUB_OUTPUT
 
-      - name: Build
+      - name: Build (Static Linking)
         shell: bash
         env:
           GOOS:        ${{ matrix.goos }}
           GOARCH:      ${{ matrix.goarch }}
-          GOARM:       ${{ matrix.goarm }}
-          GOMIPS:      ${{ matrix.gomips }}
           CGO_ENABLED: 1
           CC:          ${{ matrix.cc }}
         run: |
           mkdir -p dist
+          # 关键修改：通过 -extldflags "-static" 实现完全静态化，适配 Alpine
           go build \
             -tags fts5 \
-            -ldflags="-s -w -X main.version=${{ needs.tag.outputs.tag }}" \
+            -ldflags="-s -w -X main.version=${{ needs.tag.outputs.tag }} -linkmode external -extldflags '-static'" \
             -trimpath \
             -o "dist/${{ steps.fname.outputs.name }}" \
             .
-          ls -lh dist/
+          
+          # 验证是否为静态文件 (在日志中查看，不含 dynamic 词汇即成功)
+          file "dist/${{ steps.fname.outputs.name }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -110,8 +104,7 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────
-  # Step 3: 构建 Docker 多架构镜像并推送 DockerHub
-  # 直接复用 Step 2 产出的 linux/amd64 和 linux/arm64 二进制
+  # Step 3: 构建 Docker 多架构镜像
   # ──────────────────────────────────────────
   docker:
     name: Build & Push Docker
@@ -121,23 +114,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download linux/amd64 binary
+      - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          name: bin-linux-amd64
-          path: docker/amd64
+          path: docker-context
 
-      - name: Download linux/arm64 binary
-        uses: actions/download-artifact@v4
-        with:
-          name: bin-linux-arm64
-          path: docker/arm64
-
-      - name: Prepare binaries
+      - name: Prepare Docker Context
         run: |
-          chmod +x docker/amd64/noteos-linux-amd64
-          chmod +x docker/arm64/noteos-linux-arm64
-          ls -lh docker/amd64/ docker/arm64/
+          # 将下载的 artifact 整理到统一目录
+          mkdir -p docker
+          cp docker-context/bin-linux-amd64/noteos-linux-amd64 docker/noteos-linux-amd64
+          cp docker-context/bin-linux-arm64/noteos-linux-arm64 docker/noteos-linux-arm64
+          chmod +x docker/noteos-linux-*
 
       - name: Write Dockerfile
         run: |
@@ -145,6 +133,7 @@ jobs:
           FROM alpine:3.19
           RUN apk add --no-cache ca-certificates tzdata
           ARG TARGETARCH
+          # 根据当前构建架构拷贝对应的静态二进制文件
           COPY noteos-linux-${TARGETARCH} /noteos
           RUN chmod +x /noteos
           ENV NOTEOS_AUTH=""
@@ -153,12 +142,6 @@ jobs:
           ENTRYPOINT ["/noteos"]
           CMD ["--dir", "/data", "--port", "2344"]
           EOF
-
-      - name: Flatten binaries into docker context
-        run: |
-          cp docker/amd64/noteos-linux-amd64 docker/noteos-linux-amd64
-          cp docker/arm64/noteos-linux-arm64 docker/noteos-linux-arm64
-          ls -lh docker/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -172,7 +155,7 @@ jobs:
           username: ${{ secrets.USER }}
           password: ${{ secrets.PASSWORD }}
 
-      - name: Build and push multi-arch image
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: docker
@@ -183,13 +166,9 @@ jobs:
           tags: |
             ${{ secrets.USER }}/noteos:${{ needs.tag.outputs.tag }}
             ${{ secrets.USER }}/noteos:latest
-          labels: |
-            org.opencontainers.image.version=${{ needs.tag.outputs.tag }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ needs.tag.outputs.tag }}
 
   # ──────────────────────────────────────────
-  # Step 4: 创建 GitHub Release，附上所有二进制
+  # Step 4: 发布 GitHub Release
   # ──────────────────────────────────────────
   release:
     name: Publish Release
@@ -197,11 +176,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
@@ -209,72 +184,17 @@ jobs:
           pattern: bin-*
           merge-multiple: true
 
-      - name: Show binaries
-        run: ls -lh dist/
-
-      - name: Create Git tag
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ needs.tag.outputs.tag }}"
-          git push origin "${{ needs.tag.outputs.tag }}"
-
-      - name: Build release body
-        run: |
-          TAG="${{ needs.tag.outputs.tag }}"
-          NOTE="${{ github.event.inputs.note }}"
-          SHA="${{ github.sha }}"
-          DOCKER_USER="${{ vars.user }}"
-
-          cat > body.md << BODY
-          ## NoteOS · ${TAG}
-
-          $([ -n "${NOTE}" ] && echo "> ${NOTE}" && echo)
-          Commit: \`${SHA:0:7}\` · Built by [@${{ github.actor }}](https://github.com/${{ github.actor }})
-
-          ### Docker 快速启动
-
-          \`\`\`bash
-          # 直接运行（无认证）
-          docker run -d -p 2344:2344 -v ./data:/data ${DOCKER_USER}/noteos:latest
-
-          # 带密码保护
-          docker run -d -p 2344:2344 -v ./data:/data ${DOCKER_USER}/noteos:latest --auth noteos:mypassword
-
-          # 指定版本
-          docker run -d -p 2344:2344 -v ./data:/data ${DOCKER_USER}/noteos:${TAG}
-          \`\`\`
-
-          ### 二进制快速启动
-
-          \`\`\`bash
-          chmod +x noteos-linux-amd64
-          ./noteos-linux-amd64 --dir ./data
-          \`\`\`
-
-          访问 http://localhost:2344
-
-          ### Docker 镜像
-
-          | 镜像 | 架构 |
-          |------|------|
-          | \`${DOCKER_USER}/noteos:latest\` | linux/amd64, linux/arm64 |
-          | \`${DOCKER_USER}/noteos:${TAG}\` | linux/amd64, linux/arm64 |
-
-          ### 各平台二进制
-
-          | 文件 | 平台 |
-          |------|------|
-          | \`noteos-linux-amd64\` | Linux x86_64 |
-          | \`noteos-linux-arm64\` | Linux ARM64（树莓派 4/5、NAS） |
-          BODY
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag.outputs.tag }}
           name: "NoteOS ${{ needs.tag.outputs.tag }}"
-          body_path: body.md
+          body: |
+            ## Release Note
+            ${{ github.event.inputs.note }}
+            
+            ### Docker Image
+            `docker pull ${{ secrets.USER }}/noteos:latest`
           files: dist/noteos-*
           draft: false
           prerelease: false
