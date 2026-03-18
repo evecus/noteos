@@ -45,20 +45,16 @@ chmod +x noteos-linux-amd64
 ### Docker
 
 ```bash
-# 无认证
-docker run -d \
-  --name noteos \
-  -p 2344:2344 \
-  -v ./data:/data \
-  yourname/noteos:latest
 
 # 带登录认证（推荐用环境变量，避免密码出现在进程列表）
 docker run -d \
   --name noteos \
   -p 2344:2344 \
   -v ./data:/data \
+  -e CF=true \       #可选
+  -e TOKEN=xxx \       #可选
   -e NOTEOS_AUTH=admin:mypassword \
-  yourname/noteos:latest
+  evecus/noteos:latest
 ```
 
 ### Docker Compose
@@ -66,7 +62,7 @@ docker run -d \
 ```yaml
 services:
   noteos:
-    image: yourname/noteos:latest
+    image: evecus/noteos:latest
     container_name: noteos
     restart: unless-stopped
     ports:
