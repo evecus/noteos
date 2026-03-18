@@ -306,7 +306,7 @@ func (h *Handler) UploadImage(c *fiber.Ctx) error {
 	}
 	if err := h.db.AddImage(id, filename); err != nil {
 		os.Remove(dest)
-		return fiber.NewError(500, err.Error())
+		return fiber.NewError(500, "图片保存失败")
 	}
 	return c.JSON(fiber.Map{"filename": filename, "url": "/uploads/" + filename})
 }
