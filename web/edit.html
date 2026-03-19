@@ -7,6 +7,11 @@
 <link rel="icon" type="image/svg+xml" href="/static/icon.svg"/>
 <link rel="stylesheet" href="/static/app.css"/>
 <style>
+/* ===== CSS 变量补充 ===== */
+:root {
+  --topbar-h: calc(56px + var(--safe-top));
+}
+
 /* ===== 全屏编辑布局 ===== */
 html, body { height: 100%; overflow: hidden; }
 
@@ -21,12 +26,13 @@ html, body { height: 100%; overflow: hidden; }
 /* ===== 顶部栏 ===== */
 #topbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
-  height: 56px;
-  padding-top: var(--safe-top);
-  padding-left: max(16px, var(--safe-left));
-  padding-right: max(16px, var(--safe-right));
+  min-height: var(--topbar-h);
+  padding-bottom: 8px;
+  padding-top: max(8px, var(--safe-top));
+  padding-left: max(12px, var(--safe-left));
+  padding-right: max(12px, var(--safe-right));
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -47,6 +53,7 @@ html, body { height: 100%; overflow: hidden; }
   -webkit-tap-highlight-color: transparent;
   flex-shrink: 0;
   font-weight: 500;
+  white-space: nowrap;
 }
 .topbar-btn svg { width: 18px; height: 18px; fill: currentColor; flex-shrink: 0; }
 .topbar-btn:hover { background: var(--bg3); color: var(--text); }
@@ -61,19 +68,17 @@ html, body { height: 100%; overflow: hidden; }
 .topbar-btn.danger { color: var(--danger); }
 .topbar-btn.danger:hover { background: #fee2e2; }
 .topbar-spacer { flex: 1; }
-.topbar-actions { display: flex; align-items: center; gap: 4px; }
+.topbar-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 
-/* ===== 编辑区 ===== */
+/* ===== 编辑区（内容居中，最大宽度限制）===== */
 #editor-wrap {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0 24px 0;
+  padding: 0 max(24px, calc((100vw - 820px) / 2));
   padding-bottom: max(16px, var(--safe-bottom));
-  max-width: 820px;
   width: 100%;
-  margin: 0 auto;
   box-sizing: border-box;
   gap: 0;
 }
@@ -116,7 +121,7 @@ html, body { height: 100%; overflow: hidden; }
   font-size: 13px;
   color: var(--text2);
   min-width: 0;
-  flex: 1 1 140px;
+  flex: 1 1 120px;
   font-family: var(--font);
 }
 #tags-row input::placeholder { color: var(--text3); }
@@ -135,7 +140,7 @@ html, body { height: 100%; overflow: hidden; }
 .chip .remove { cursor: pointer; opacity: .6; line-height: 1; font-size: 13px; }
 .chip .remove:hover { opacity: 1; }
 
-/* 工具栏（置顶 + 附件）*/
+/* 工具栏 */
 #edit-toolbar {
   display: flex;
   align-items: center;
@@ -143,6 +148,7 @@ html, body { height: 100%; overflow: hidden; }
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 .edit-tool-btn {
   display: inline-flex;
@@ -158,6 +164,7 @@ html, body { height: 100%; overflow: hidden; }
   cursor: pointer;
   transition: background .15s, color .15s;
   -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
 }
 .edit-tool-btn svg { width: 15px; height: 15px; fill: currentColor; flex-shrink: 0; }
 .edit-tool-btn:hover { background: var(--bg3); }
@@ -166,6 +173,7 @@ html, body { height: 100%; overflow: hidden; }
 /* 正文 textarea */
 #input-content {
   flex: 1;
+  min-height: 0;       /* 关键：让 flex 子项可以收缩 */
   width: 100%;
   border: none;
   outline: none;
@@ -175,19 +183,21 @@ html, body { height: 100%; overflow: hidden; }
   line-height: 1.75;
   background: transparent;
   color: var(--text);
-  padding: 16px 0 20px;
-  -webkit-overflow-scrolling: touch;
+  padding: 16px 0 12px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 #input-content::placeholder { color: var(--text3); }
 
 /* 附件预览区 */
 #files-area {
   flex-shrink: 0;
-  padding: 8px 0;
+  padding: 6px 0;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
 }
 .edit-img-wrap { position: relative; display: inline-block; }
 .edit-img-wrap img {
@@ -210,7 +220,8 @@ html, body { height: 100%; overflow: hidden; }
   display: flex; align-items: center; gap: 8px;
   padding: 6px 10px;
   background: var(--bg3); border: 1px solid var(--border);
-  border-radius: 8px; min-width: 160px; max-width: 260px;
+  border-radius: 8px; min-width: 0; max-width: 280px;
+  flex: 1 1 160px;
 }
 .att-icon-sm {
   width: 28px; height: 28px; border-radius: 5px;
@@ -229,7 +240,7 @@ html, body { height: 100%; overflow: hidden; }
 #drop-zone {
   border: 2px dashed var(--border);
   border-radius: 10px;
-  padding: 14px;
+  padding: 12px 14px;
   text-align: center;
   color: var(--text3);
   font-size: 13px;
@@ -242,19 +253,52 @@ html, body { height: 100%; overflow: hidden; }
   justify-content: center;
   gap: 8px;
 }
-#drop-zone svg { width: 18px; height: 18px; fill: var(--text3); }
+#drop-zone svg { width: 18px; height: 18px; fill: var(--text3); flex-shrink: 0; }
 #drop-zone:hover, #drop-zone.drag-over { border-color: var(--accent); background: var(--accent-light); color: var(--accent); }
 #drop-zone input { display: none; }
 
-/* 移动端 */
+/* ===== 桌面大屏 ≥1200px ===== */
+@media (min-width: 1200px) {
+  #input-title { font-size: 24px; }
+  #input-content { font-size: 16px; }
+}
+
+/* ===== 平板 769–1024px ===== */
+@media (min-width: 769px) and (max-width: 1024px) {
+  #editor-wrap { padding: 0 28px; padding-bottom: max(16px, var(--safe-bottom)); }
+}
+
+/* ===== 移动端 ≤768px ===== */
 @media (max-width: 768px) {
-  #editor-wrap { padding: 0 14px; padding-bottom: max(16px, var(--safe-bottom)); }
-  #input-title { font-size: 19px; padding: 16px 0 12px; }
-  #input-content { font-size: 15px; }
-  .topbar-btn span { display: none; }
-  .topbar-btn { padding: 8px; }
-  .topbar-btn.primary { padding: 8px 14px; }
-  .topbar-btn.primary span { display: inline; }
+  #editor-wrap { padding: 0 14px; padding-bottom: max(12px, var(--safe-bottom)); }
+  #input-title { font-size: 18px; padding: 14px 0 10px; }
+  #input-title::placeholder { font-size: 17px; }
+  #input-content { font-size: 15px; padding: 12px 0 8px; }
+  /* 顶栏：隐藏文字只保留图标（保存按钮例外，保留文字） */
+  .topbar-btn.danger span { display: none; }
+  .topbar-btn.danger { padding: 8px; }
+  /* 拖拽区简化文字 */
+  #drop-zone { padding: 10px; font-size: 12px; }
+  /* 附件文件行紧凑 */
+  .edit-att-row { max-width: 100%; }
+  /* 附件区限高 */
+  #files-area { max-height: 140px; }
+}
+
+/* ===== 超小屏 ≤380px ===== */
+@media (max-width: 380px) {
+  #input-title { font-size: 16px; }
+  .topbar-btn.primary { padding: 7px 10px; }
+  .topbar-btn.primary span { font-size: 13px; }
+  .edit-tool-btn span { display: none; }
+  .edit-tool-btn { padding: 6px 8px; }
+}
+
+/* ===== 横屏移动（键盘弹起时空间紧张）===== */
+@media (max-width: 768px) and (orientation: landscape) {
+  #drop-zone { display: none; } /* 横屏隐藏拖拽区节省空间 */
+  #files-area { max-height: 80px; }
+  #input-title { padding: 10px 0 8px; }
 }
 </style>
 </head>
@@ -592,6 +636,16 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') saveNote();
   if (e.key === 'Escape') goBack();
 });
+
+// ===== iOS 键盘弹出时高度自适应 =====
+if (window.visualViewport) {
+  const onResize = () => {
+    const vh = window.visualViewport.height;
+    document.getElementById('page').style.height = vh + 'px';
+  };
+  window.visualViewport.addEventListener('resize', onResize);
+  window.visualViewport.addEventListener('scroll', onResize);
+}
 
 // ===== 启动 =====
 init();
