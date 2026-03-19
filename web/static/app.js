@@ -160,8 +160,8 @@ function createNoteCard(note) {
     ${tagsHtml ? `<div class="note-tags">${tagsHtml}</div>` : ''}
     <div class="note-card-hover-hint">点击查看</div>
   `;
-  // Click card → open view modal
-  div.addEventListener('click', () => openViewModal(note.id));
+  // Click card → navigate to view page
+  div.addEventListener('click', () => { location.href = `/notes/${note.id}/view`; });
   return div;
 }
 
@@ -590,49 +590,7 @@ document.addEventListener('keydown', e=>{
   }
 });
 
-/* ===== Router ===== */
-
-// 解析路径，返回 { noteId, mode } 或 null
-function parseRoute(path) {
-  const m = path.match(/^\/notes\/(\d+)\/(view|edit)$/);
-  if (m) return { noteId: parseInt(m[1]), mode: m[2] };
-  return null;
-}
-
-// 根据当前 URL 决定是否打开 modal
-async function handleRoute() {
-  const route = parseRoute(window.location.pathname);
-  if (!route) {
-    // 不是笔记路由，确保 modal 关闭
-    if (state.modal.mode) _forceCloseModal();
-    return;
-  }
-  if (route.mode === 'view') {
-    await openViewModal(route.noteId, true); // skipPush=true
-  } else if (route.mode === 'edit') {
-    // 先打开 view，再切换到 edit
-    await openViewModal(route.noteId, true);
-    switchToEdit(true);
-  }
-}
-
-// 内部关闭（不改 URL）
-function _forceCloseModal() {
-  const modal = $nm('note-modal');
-  modal.classList.remove('nm-visible');
-  setTimeout(()=>{
-    $nm('modal-overlay').style.display = 'none';
-    modal.style.display = 'none';
-    modal.classList.remove('nm-enter');
-    state.modal = { mode:null, noteId:null, tags:[], pendingFiles:[] };
-  }, 200);
-}
-
-// 浏览器后退/前进
-window.addEventListener('popstate', () => handleRoute());
-
 /* ===== Init ===== */
 if (localStorage.getItem('noteos-dark')==='1') document.body.classList.add('dark');
 checkAuth();
 loadNotes(true);
-handleRoute();
