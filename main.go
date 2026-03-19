@@ -254,6 +254,24 @@ func main() {
 		return c.Send(data)
 	})
 
+	// ── 笔记独立页面路由 ──────────────────────────────────
+	app.Get("/notes/:id/view", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/html")
+		data, _ := webFS.ReadFile("web/view.html")
+		return c.Send(data)
+	})
+	app.Get("/notes/:id/edit", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/html")
+		data, _ := webFS.ReadFile("web/edit.html")
+		return c.Send(data)
+	})
+	// 新建笔记页面
+	app.Get("/notes/new", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/html")
+		data, _ := webFS.ReadFile("web/edit.html")
+		return c.Send(data)
+	})
+
 	// ── API 路由 ───────────────────────────────────────────
 	apiv1 := app.Group("/api/v1")
 	apiv1.Get("/notes", h.ListNotes)
