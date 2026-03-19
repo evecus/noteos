@@ -63,6 +63,16 @@ const api = {
   }
 };
 
+/* ===== Mobile Header Search ===== */
+function mobileHeaderSearch() {
+  const val = document.getElementById('mobile-header-input')?.value.trim() || '';
+  clearTimeout(_st);
+  _st = setTimeout(() => {
+    state.query = val;
+    state.tag = ''; state.view = ''; loadNotes(true);
+  }, 350);
+}
+
 /* ===== Mobile ===== */
 function toggleMobileSidebar() { document.body.classList.toggle('sidebar-open'); }
 function closeMobileSidebar()  { document.body.classList.remove('sidebar-open'); }
@@ -214,7 +224,8 @@ function openNoteModal() {
 }
 
 /* Open modal in VIEW mode (click card) */
-async function openViewModal(id) {
+async function openViewModal(id, skipPush) {
+  if (!skipPush) history.pushState({ noteId: id, mode: 'view' }, '', `/notes/${id}/view`);
   const note = await api.get(`/notes/${id}`);
   state.modal = { mode:'view', noteId:id, tags:[...(note.tags||[])], pendingFiles:[] };
   _applyModalMode('view', note);
@@ -222,9 +233,10 @@ async function openViewModal(id) {
 }
 
 /* Switch from view → edit */
-function switchToEdit() {
+function switchToEdit(skipPush) {
   const id = state.modal.noteId;
   if (!id) return;
+  if (!skipPush) history.pushState({ noteId: id, mode: 'edit' }, '', `/notes/${id}/edit`);
   state.modal.mode = 'edit';
   // Keep current textarea value (already loaded), just flip UI
   const content = $nm('nm-preview').dataset.rawContent || '';
@@ -321,6 +333,10 @@ function _showModal() {
 function closeModal() {
   const modal = $nm('note-modal');
   modal.classList.remove('nm-visible');
+  // 恢复 URL
+  if (window.location.pathname !== '/') {
+    history.pushState({}, '', '/');
+  }
   setTimeout(()=>{
     $nm('modal-overlay').style.display = 'none';
     modal.style.display = 'none';
@@ -574,7 +590,49 @@ document.addEventListener('keydown', e=>{
   }
 });
 
+/* ===== Router ===== */
+
+// 解析路径，返回 { noteId, mode } 或 null
+function parseRoute(path) {
+  const m = path.match(/^\/notes\/(\d+)\/(view|edit)$/);
+  if (m) return { noteId: parseInt(m[1]), mode: m[2] };
+  return null;
+}
+
+// 根据当前 URL 决定是否打开 modal
+async function handleRoute() {
+  const route = parseRoute(window.location.pathname);
+  if (!route) {
+    // 不是笔记路由，确保 modal 关闭
+    if (state.modal.mode) _forceCloseModal();
+    return;
+  }
+  if (route.mode === 'view') {
+    await openViewModal(route.noteId, true); // skipPush=true
+  } else if (route.mode === 'edit') {
+    // 先打开 view，再切换到 edit
+    await openViewModal(route.noteId, true);
+    switchToEdit(true);
+  }
+}
+
+// 内部关闭（不改 URL）
+function _forceCloseModal() {
+  const modal = $nm('note-modal');
+  modal.classList.remove('nm-visible');
+  setTimeout(()=>{
+    $nm('modal-overlay').style.display = 'none';
+    modal.style.display = 'none';
+    modal.classList.remove('nm-enter');
+    state.modal = { mode:null, noteId:null, tags:[], pendingFiles:[] };
+  }, 200);
+}
+
+// 浏览器后退/前进
+window.addEventListener('popstate', () => handleRoute());
+
 /* ===== Init ===== */
 if (localStorage.getItem('noteos-dark')==='1') document.body.classList.add('dark');
 checkAuth();
 loadNotes(true);
+handleRoute();
