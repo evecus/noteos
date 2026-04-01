@@ -112,7 +112,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from '../composables/useApi.js'
+import { api, checkAuth } from '../composables/useApi.js'
 import { parseMarkdown } from '../composables/useMarkdown.js'
 import { useToast } from '../composables/useToast.js'
 import TagEditor from '../components/TagEditor.vue'
@@ -286,8 +286,9 @@ function onViewportResize() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (localStorage.getItem('noteos-dark') === '1') document.body.classList.add('dark')
+  await checkAuth()
   loadNote()
   document.addEventListener('keydown', onKeydown)
   if (window.visualViewport) {

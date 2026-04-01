@@ -84,6 +84,7 @@ async function doLogin() {
   try {
     const r = await fetch('/api/auth/login', {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: password.value }),
     })

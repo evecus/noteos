@@ -193,7 +193,7 @@ func main() {
 	app.Use(cors.New())
 
 	// ── CSRF 中间件（保护状态变更接口） ────────────────────
-	app.Use(csrfMiddleware)
+	app.Use(makeCsrfMiddleware(database))
 
 	// ── 上传目录 ───────────────────────────────────────────
 	uploadsDir := filepath.Join(*dir, "uploads")
@@ -203,6 +203,7 @@ func main() {
 	app.Post("/api/auth/login", makeLoginHandler(database))
 	app.Post("/api/auth/logout", makeLogoutHandler())
 	app.Get("/api/auth/status", makeStatusHandler(database))
+	app.Get("/api/auth/csrf", makeCsrfRefreshHandler(database))
 
 	// ── 预加载 dist 子 FS ──────────────────────────────────
 	distSub, err := fs.Sub(webFS, "web/dist")
@@ -281,33 +282,40 @@ func main() {
 }
 
 // ── CSRF 中间件 ────────────────────────────────────────────────────────────
-// 登录后在 cookie 里写一个 csrf_token，前端每次状态变更请求带上
-// X-CSRF-Token header，服务端比对。
-// 放行：GET/HEAD/OPTIONS（幂等）、/api/auth/*（登录本身不需要）
-func csrfMiddleware(c *fiber.Ctx) error {
-	method := c.Method()
-	// 幂等方法放行
-	if method == "GET" || method == "HEAD" || method == "OPTIONS" {
-		return c.Next()
-	}
-	// 认证接口放行（登录时还没有 CSRF token）
-	if strings.HasPrefix(c.Path(), "/api/auth/") {
-		return c.Next()
-	}
-	// 无需认证时也不需要 CSRF（没有保护的意义）
-	if c.Path() == "/login" {
-		return c.Next()
-	}
+// GET 请求时若 csrf_token cookie 不存在则自动种入（无认证模式首次访问）。
+// POST/PUT/DELETE 请求校验 cookie 与 X-CSRF-Token header 是否一致。
+func makeCsrfMiddleware(_ *db.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		method := c.Method()
 
-	// 获取 cookie 里的 token
-	cookieToken := c.Cookies("csrf_token")
-	// 获取 header 里的 token
-	headerToken := c.Get("X-CSRF-Token")
+		// 认证相关接口完全放行
+		if strings.HasPrefix(c.Path(), "/api/auth/") {
+			return c.Next()
+		}
 
-	if cookieToken == "" || headerToken == "" || cookieToken != headerToken {
-		return c.Status(403).JSON(fiber.Map{"error": "CSRF 验证失败"})
+		// GET/HEAD/OPTIONS：幂等，顺便确保 csrf_token cookie 存在
+		if method == "GET" || method == "HEAD" || method == "OPTIONS" {
+			if c.Cookies("csrf_token") == "" {
+				c.Cookie(&fiber.Cookie{
+					Name:     "csrf_token",
+					Value:    randomToken(),
+					Path:     "/",
+					HTTPOnly: false,
+					SameSite: "Lax",
+					MaxAge:   86400 * 7,
+				})
+			}
+			return c.Next()
+		}
+
+		// 状态变更请求：校验 CSRF token
+		cookieToken := c.Cookies("csrf_token")
+		headerToken := c.Get("X-CSRF-Token")
+		if cookieToken == "" || headerToken == "" || cookieToken != headerToken {
+			return c.Status(403).JSON(fiber.Map{"error": "CSRF 验证失败"})
+		}
+		return c.Next()
 	}
-	return c.Next()
 }
 
 // ── Auth handlers ──────────────────────────────────────────────────────────
@@ -394,6 +402,40 @@ func makeStatusHandler(database *db.DB) fiber.Handler {
 			return c.JSON(fiber.Map{"protected": true, "loggedIn": false})
 		}
 		return c.JSON(fiber.Map{"protected": true, "loggedIn": true, "username": user})
+	}
+}
+
+// makeCsrfRefreshHandler 用于 session 存在但 csrf_token cookie 丢失时补种
+func makeCsrfRefreshHandler(database *db.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// 无密码保护模式：直接种一个 token
+		if !database.HasCredential() {
+			csrfToken := randomToken()
+			c.Cookie(&fiber.Cookie{
+				Name:     "csrf_token",
+				Value:    csrfToken,
+				Path:     "/",
+				HTTPOnly: false,
+				SameSite: "Lax",
+				MaxAge:   86400,
+			})
+			return c.JSON(fiber.Map{"ok": true})
+		}
+		// 有密码保护：检查 session
+		sess, _ := sessionStore.Get(c)
+		if sess.Get("user") == nil {
+			return c.Status(401).JSON(fiber.Map{"error": "未登录"})
+		}
+		csrfToken := randomToken()
+		c.Cookie(&fiber.Cookie{
+			Name:     "csrf_token",
+			Value:    csrfToken,
+			Path:     "/",
+			HTTPOnly: false,
+			SameSite: "Lax",
+			MaxAge:   86400,
+		})
+		return c.JSON(fiber.Map{"ok": true})
 	}
 }
 
