@@ -115,7 +115,7 @@ jobs:
       - name: Build Vue frontend
         working-directory: frontend
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Download dependencies
