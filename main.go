@@ -246,7 +246,6 @@ func main() {
 	apiv1.Get("/export/markdown", h.ExportMarkdown)
 
 	// ── 账号设置 ───────────────────────────────────────────
-	app.Get("/api/settings/account", makeGetAccountHandler(database))
 	app.Put("/api/settings/account", makeUpdateAccountHandler(database))
 
 	addr := fmt.Sprintf(":%d", *port)
@@ -460,23 +459,12 @@ func randomToken() string {
 	return hex.EncodeToString(b)
 }
 
-// ── 账号设置 handlers ──────────────────────────────────────────────────────
-
-func makeGetAccountHandler(database *db.DB) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		username, err := database.GetUsername()
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "获取账号信息失败"})
-		}
-		return c.JSON(fiber.Map{"username": username})
-	}
-}
+// ── 账号设置 handler ──────────────────────────────────────────────────────
 
 func makeUpdateAccountHandler(database *db.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
 			CurrentPassword string `json:"current_password"`
-			NewUsername     string `json:"new_username"`
 			NewPassword     string `json:"new_password"`
 		}
 		if err := c.BodyParser(&req); err != nil {
@@ -485,35 +473,23 @@ func makeUpdateAccountHandler(database *db.DB) fiber.Handler {
 		if req.CurrentPassword == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "请输入当前密码"})
 		}
-		if req.NewUsername == "" && req.NewPassword == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "请至少修改用户名或密码"})
+		if req.NewPassword == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "请输入新密码"})
 		}
 
-		// 获取当前用户名
-		oldUsername, err := database.GetUsername()
+		// 获取当前用户名并验证密码
+		username, err := database.GetUsername()
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "获取账号信息失败"})
+			return c.Status(500).JSON(fiber.Map{"error": "系统错误"})
 		}
-
-		// 验证当前密码
-		hash, err := database.GetCredentialHash(oldUsername)
-		if err != nil {
-			return c.Status(401).JSON(fiber.Map{"error": "验证失败"})
-		}
-		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)); err != nil {
+		hash, err := database.GetCredentialHash(username)
+		if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)) != nil {
 			return c.Status(401).JSON(fiber.Map{"error": "当前密码错误"})
 		}
 
-		// 执行更新
-		if err := database.UpdateCredential(oldUsername, req.NewUsername, req.NewPassword); err != nil {
+		// 更新密码
+		if err := database.UpdateCredential(username, "", req.NewPassword); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "更新失败: " + err.Error()})
-		}
-
-		// 用户名变更时刷新 session
-		if req.NewUsername != "" && req.NewUsername != oldUsername {
-			sess, _ := sessionStore.Get(c)
-			sess.Set("user", req.NewUsername)
-			sess.Save()
 		}
 
 		return c.JSON(fiber.Map{"ok": true})
