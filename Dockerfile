@@ -21,7 +21,6 @@ RUN chmod +x /noteos
 COPY docker-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV NOTEOS_AUTH=""
 ENV CF=false
 ENV TOKEN=""
 
