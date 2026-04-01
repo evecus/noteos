@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<title>笔记详情 · NoteOS</title>
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg"/>
+<link rel="stylesheet" href="/static/app.css"/>
+<style>
+/* ===== CSS 变量补充 ===== */
+:root {
+  --topbar-h: calc(56px + var(--safe-top));
+}
+
+/* ===== 全屏页面布局 ===== */
+html, body { height: 100%; overflow: hidden; }
+
+#page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--bg);
+}
+
+/* ===== 顶部栏 ===== */
+#topbar {
+  display: flex;
+  align-items: flex-end; /* 内容对齐到安全区下方 */
+  gap: 8px;
+  min-height: var(--topbar-h);
+  padding-bottom: 8px;
+  padding-top: max(8px, var(--safe-top));
+  padding-left: max(12px, var(--safe-left));
+  padding-right: max(12px, var(--safe-right));
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text2);
+  font-size: 14px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.topbar-btn svg { width: 18px; height: 18px; fill: currentColor; flex-shrink: 0; }
+.topbar-btn:hover { background: var(--bg3); color: var(--text); }
+.topbar-btn:active { background: var(--border); }
+.topbar-btn.accent { color: var(--accent); }
+.topbar-btn.accent:hover { background: var(--accent-light); }
+.topbar-btn.danger { color: var(--danger); }
+.topbar-btn.danger:hover { background: #fee2e2; }
+
+.topbar-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text2);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  padding: 0 4px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ===== 内容区 ===== */
+#content {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding: 32px max(24px, calc((100vw - 780px) / 2)) max(60px, calc(var(--safe-bottom) + 40px));
+}
+
+/* 内容最大宽度居中 */
+#content-inner {
+  max-width: 780px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* 标题 */
+#note-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+  margin-bottom: 14px;
+  letter-spacing: -.02em;
+  word-break: break-word;
+}
+
+/* meta 行 */
+#note-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text3);
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.meta-pin { color: var(--pin); font-size: 14px; }
+
+/* 标签 */
+#note-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 24px; }
+
+/* 正文 */
+#note-body {
+  font-size: 16px;
+  line-height: 1.85;
+  color: var(--text);
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+#note-body h1 { font-size: 1.7em; font-weight: 700; margin: 1.2em 0 .5em; line-height: 1.25; }
+#note-body h2 { font-size: 1.35em; font-weight: 700; margin: 1em 0 .4em; }
+#note-body h3 { font-size: 1.15em; font-weight: 600; margin: .9em 0 .35em; }
+#note-body p  { margin: .65em 0; }
+#note-body ul, #note-body ol { padding-left: 1.6em; margin: .5em 0; }
+#note-body li { margin: .25em 0; }
+#note-body blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 14px;
+  color: var(--text2);
+  margin: .8em 0;
+  font-style: italic;
+}
+#note-body code {
+  background: var(--bg3);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 0.88em;
+  font-family: 'Fira Code', 'Cascadia Code', monospace;
+}
+#note-body pre {
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: .8em 0;
+  border: 1px solid var(--border);
+}
+#note-body pre code { background: none; padding: 0; font-size: 13px; }
+#note-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+#note-body img { max-width: 100%; border-radius: 10px; margin: 8px 0; display: block; }
+#note-body hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+#note-body input[type=checkbox] { margin-right: 5px; }
+#note-body strong { font-weight: 700; }
+#note-body em { font-style: italic; }
+#note-body table { border-collapse: collapse; width: 100%; margin: .8em 0; }
+#note-body th, #note-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; font-size: 14px; }
+#note-body th { background: var(--bg3); font-weight: 600; }
+
+/* 附件区 */
+#note-files { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--border); }
+.files-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text3);
+  margin-bottom: 12px;
+}
+.files-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.files-images img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: opacity .15s, transform .12s;
+  border: 1px solid var(--border);
+  display: block;
+}
+.files-images img:hover { opacity: .88; transform: scale(1.02); }
+.files-list { display: flex; flex-direction: column; gap: 6px; }
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--text);
+  transition: background .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.file-row:hover { background: var(--bg3); }
+.file-icon {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  background: var(--accent-light);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.file-icon svg { width: 18px; height: 18px; fill: currentColor; }
+.file-info { flex: 1; min-width: 0; }
+.file-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-size { font-size: 12px; color: var(--text3); margin-top: 2px; }
+.file-open svg { width: 16px; height: 16px; fill: var(--text3); flex-shrink: 0; }
+
+/* 骨架屏 */
+#skeleton {
+  padding: 32px max(24px, calc((100vw - 780px) / 2));
+  max-width: 780px;
+  margin: 0 auto;
+}
+.sk-line {
+  height: 16px; background: var(--bg3); border-radius: 6px;
+  margin-bottom: 12px; animation: sk-pulse 1.4s ease infinite;
+}
+.sk-line.wide { width: 80%; }
+.sk-line.medium { width: 55%; }
+.sk-line.short { width: 35%; }
+.sk-title { height: 32px; width: 70%; margin-bottom: 20px; }
+@keyframes sk-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* ===== Lightbox ===== */
+#lightbox {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.88);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  padding: 20px;
+}
+#lightbox img {
+  max-width: 100%;
+  max-height: 90dvh;
+  border-radius: 8px;
+  object-fit: contain;
+  user-select: none;
+}
+
+/* ===== 桌面端大屏优化 (≥1200px) ===== */
+@media (min-width: 1200px) {
+  #note-title { font-size: 32px; }
+  #note-body { font-size: 17px; }
+  .files-images { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+}
+
+/* ===== 平板 769–1024px ===== */
+@media (min-width: 769px) and (max-width: 1024px) {
+  #content { padding: 24px 32px max(48px, calc(var(--safe-bottom) + 32px)); }
+  #note-title { font-size: 24px; }
+}
+
+/* ===== 移动端 ≤768px ===== */
+@media (max-width: 768px) {
+  #content {
+    padding: 20px 16px max(80px, calc(var(--safe-bottom) + 60px));
+  }
+  #skeleton { padding: 20px 16px; }
+  #note-title { font-size: 21px; }
+  #note-body { font-size: 15px; line-height: 1.75; }
+  #note-body pre { padding: 12px; font-size: 12px; border-radius: 8px; }
+  .files-images { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
+  .files-images img { border-radius: 8px; }
+  .file-row { padding: 10px 12px; }
+  /* 顶栏：仅图标，隐藏文字（保留"返回"文字保持可读性） */
+  .topbar-btn.accent span,
+  .topbar-btn.danger span { display: none; }
+  .topbar-btn.accent,
+  .topbar-btn.danger { padding: 8px; }
+}
+
+/* ===== 超小屏 ≤380px ===== */
+@media (max-width: 380px) {
+  #note-title { font-size: 19px; }
+  #note-body { font-size: 14px; }
+  .topbar-btn { padding: 7px; }
+  .topbar-btn span { display: none; }
+}
+
+/* ===== 横屏移动 ===== */
+@media (max-width: 768px) and (orientation: landscape) {
+  #content { padding-top: 12px; }
+  #note-title { font-size: 20px; margin-bottom: 10px; }
+}
+</style>
+</head>
+<body>
+<div id="page">
+  <div id="topbar">
+    <button class="topbar-btn" onclick="goBack()">
+      <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+      <span>返回</span>
+    </button>
+    <div class="topbar-title" id="topbar-title">笔记详情</div>
+    <div class="topbar-actions">
+      <button class="topbar-btn danger" id="btn-delete" onclick="deleteNote()" title="删除" style="display:none">
+        <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+        <span>删除</span>
+      </button>
+      <button class="topbar-btn accent" id="btn-edit" onclick="goEdit()" title="编辑">
+        <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+        <span>编辑</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- 骨架屏 loading -->
+  <div id="skeleton">
+    <div class="sk-line sk-title"></div>
+    <div class="sk-line short" style="margin-bottom:24px"></div>
+    <div class="sk-line wide"></div>
+    <div class="sk-line medium"></div>
+    <div class="sk-line wide"></div>
+    <div class="sk-line short"></div>
+    <div class="sk-line wide"></div>
+    <div class="sk-line medium"></div>
+  </div>
+
+  <div id="content" style="display:none">
+    <div id="content-inner">
+    <div id="note-title"></div>
+    <div id="note-meta"></div>
+    <div id="note-tags"></div>
+    <div id="note-body"></div>
+    <div id="note-files"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" style="display:none" onclick="closeLightbox()">
+  <img id="lightbox-img"/>
+</div>
+
+<script>
+// ===== CSS 变量（暗色模式）=====
+if (localStorage.getItem('noteos-dark') === '1') document.body.classList.add('dark');
+
+// ===== 工具函数 =====
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function formatSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+function formatDate(s) {
+  return new Date(s).toLocaleString('zh-CN', {
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit'
+  });
+}
+function getCsrfToken() {
+  return document.cookie.split(';').map(c=>c.trim())
+    .find(c=>c.startsWith('csrf_token='))?.split('=')[1] || '';
+}
+
+// ===== Markdown 解析（与 index.html 相同）=====
+(function(){
+  const e=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  window.marked={parse:function(src){
+    if(!src)return'';let s=src;
+    s=s.replace(/```(\w*)\n([\s\S]*?)```/g,(_,lang,code)=>`<pre><code class="language-${e(lang)}">${e(code.trim())}</code></pre>`);
+    s=s.replace(/`([^`]+)`/g,(_,c)=>`<code>${e(c)}</code>`);
+    s=s.replace(/^### (.+)$/gm,(_,t)=>`<h3>${t}</h3>`);
+    s=s.replace(/^## (.+)$/gm,(_,t)=>`<h2>${t}</h2>`);
+    s=s.replace(/^# (.+)$/gm,(_,t)=>`<h1>${t}</h1>`);
+    s=s.replace(/^> (.+)$/gm,(_,t)=>`<blockquote>${t}</blockquote>`);
+    s=s.replace(/\*\*\*(.+?)\*\*\*/g,'<strong><em>$1</em></strong>');
+    s=s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+    s=s.replace(/\*(.+?)\*/g,'<em>$1</em>');
+    s=s.replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s=s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,'<img src="$2" alt="$1" onclick="openLightbox(this)"/>');
+    s=s.replace(/^- \[x\] (.+)$/gm,'<li><input type="checkbox" checked disabled/> $1</li>');
+    s=s.replace(/^- \[ \] (.+)$/gm,'<li><input type="checkbox" disabled/> $1</li>');
+    s=s.replace(/^[*\-] (.+)$/gm,'<li>$1</li>');
+    s=s.replace(/(<li>[\s\S]+?<\/li>)/g,'<ul>$1</ul>');
+    s=s.replace(/^\d+\. (.+)$/gm,'<li>$1</li>');
+    s=s.replace(/^---+$/gm,'<hr/>');
+    s=s.replace(/\n\n+/g,'\n\n');
+    const lines=s.split('\n');const out=[];let inPre=false;
+    for(const l of lines){
+      if(l.startsWith('<pre')){inPre=true;}
+      if(l.startsWith('</pre')){inPre=false;out.push(l);continue;}
+      if(inPre){out.push(l);continue;}
+      if(l.startsWith('<h')||l.startsWith('<ul')||l.startsWith('<ol')||l.startsWith('<li')||l.startsWith('<blockquote')||l.startsWith('<hr')||l===''||l.startsWith('<img')){out.push(l);}
+      else{out.push('<p>'+l+'</p>');}
+    }
+    return out.join('\n');
+  }};
+})();
+
+// ===== 获取 note ID =====
+const pathMatch = location.pathname.match(/\/notes\/(\d+)\/view/);
+const NOTE_ID = pathMatch ? parseInt(pathMatch[1]) : null;
+
+// ===== 加载笔记 =====
+async function loadNote() {
+  if (!NOTE_ID) { showError('无效的笔记 ID'); return; }
+  try {
+    const r = await fetch(`/api/v1/notes/${NOTE_ID}`);
+    if (r.status === 401) { location.href = '/login'; return; }
+    if (!r.ok) throw new Error('加载失败');
+    const note = await r.json();
+    renderNote(note);
+  } catch(e) {
+    showError(e.message);
+  }
+}
+
+function renderNote(note) {
+  // 顶部标题栏
+  document.title = (note.title || '笔记详情') + ' · NoteOS';
+  document.getElementById('topbar-title').textContent = note.title || '笔记详情';
+  document.getElementById('btn-delete').style.display = '';
+  document.getElementById('btn-edit').dataset.id = note.id;
+
+  // 标题
+  const titleEl = document.getElementById('note-title');
+  if (note.title) {
+    titleEl.textContent = note.title;
+    titleEl.style.display = '';
+  } else {
+    titleEl.style.display = 'none';
+  }
+
+  // meta
+  const metaEl = document.getElementById('note-meta');
+  metaEl.innerHTML = `
+    ${note.pinned ? '<span class="meta-pin">📌 已置顶</span>' : ''}
+    <span>创建于 ${formatDate(note.created_at)}</span>
+    ${note.updated_at !== note.created_at ? `<span>· 更新于 ${formatDate(note.updated_at)}</span>` : ''}
+  `;
+
+  // 标签
+  const tagsEl = document.getElementById('note-tags');
+  if (note.tags && note.tags.length) {
+    tagsEl.innerHTML = note.tags.map(t =>
+      `<span class="tag-badge">#${escHtml(t)}</span>`
+    ).join('');
+  } else {
+    tagsEl.style.display = 'none';
+  }
+
+  // 正文
+  document.getElementById('note-body').innerHTML = marked.parse(note.content || '');
+
+  // 附件
+  renderFiles(note);
+
+  // 显示内容，隐藏骨架屏
+  document.getElementById('skeleton').style.display = 'none';
+  document.getElementById('content').style.display = '';
+}
+
+function renderFiles(note) {
+  const container = document.getElementById('note-files');
+  const images = [
+    ...(note.images||[]).map(img=>({filename:img, orig_name:img, size:0, mime:'image/jpeg'})),
+    ...(note.files||[]).filter(f=>f.mime&&f.mime.startsWith('image/')),
+  ];
+  const others = (note.files||[]).filter(f=>f.mime&&!f.mime.startsWith('image/'));
+
+  if (!images.length && !others.length) { container.style.display = 'none'; return; }
+
+  let html = '<div class="files-label">附件</div>';
+  if (images.length) {
+    html += `<div class="files-images">${images.map(f =>
+      `<img src="/uploads/${escHtml(f.filename)}" alt="${escHtml(f.orig_name)}" onclick="openLightbox(this)" loading="lazy"/>`
+    ).join('')}</div>`;
+  }
+  if (others.length) {
+    html += `<div class="files-list">${others.map(f => `
+      <a class="file-row" href="/uploads/${escHtml(f.filename)}" target="_blank" rel="noopener">
+        <div class="file-icon">${fileIcon(f.mime)}</div>
+        <div class="file-info">
+          <div class="file-name">${escHtml(f.orig_name)}</div>
+          <div class="file-size">${formatSize(f.size)}</div>
+        </div>
+        <div class="file-open"><svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg></div>
+      </a>`).join('')}</div>`;
+  }
+  container.innerHTML = html;
+}
+
+function fileIcon(mime) {
+  if (!mime) return docIcon();
+  if (mime === 'application/pdf') return `<svg viewBox="0 0 24 24"><path d="M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8.5 7.5c0 .83-.67 1.5-1.5 1.5H9v2H7.5V7H10c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V7H15c.83 0 1.5.67 1.5 1.5v3zm4-3H19v1h1.5V11H19v2h-1.5V7h3v1.5z" fill="currentColor"/></svg>`;
+  if (mime.startsWith('text/')) return `<svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" fill="currentColor"/></svg>`;
+  return docIcon();
+}
+function docIcon() {
+  return `<svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z" fill="currentColor"/></svg>`;
+}
+
+// ===== 操作 =====
+function goBack() {
+  if (history.length > 1) history.back();
+  else location.href = '/';
+}
+function goEdit() {
+  location.href = `/notes/${NOTE_ID}/edit`;
+}
+async function deleteNote() {
+  if (!confirm('确认删除这条笔记？')) return;
+  try {
+    const r = await fetch(`/api/v1/notes/${NOTE_ID}`, {
+      method: 'DELETE',
+      headers: { 'X-CSRF-Token': getCsrfToken() }
+    });
+    if (!r.ok) throw new Error('删除失败');
+    location.href = '/';
+  } catch(e) {
+    alert('删除失败: ' + e.message);
+  }
+}
+
+// ===== Lightbox =====
+function openLightbox(img) {
+  document.getElementById('lightbox-img').src = img.src;
+  document.getElementById('lightbox').style.display = 'flex';
+}
+function closeLightbox() {
+  document.getElementById('lightbox').style.display = 'none';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+function showError(msg) {
+  document.getElementById('skeleton').innerHTML =
+    `<div style="text-align:center;padding:60px 0;color:var(--text3);font-size:16px">⚠️ ${escHtml(msg)}</div>`;
+}
+
+// ===== 启动 =====
+loadNote();
+</script>
+</body>
+</html>

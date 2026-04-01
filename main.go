@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +23,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-//go:embed web/*
+//go:embed web/dist web/static
 var webFS embed.FS
 
 var version = "dev"
@@ -205,12 +204,44 @@ func main() {
 	app.Post("/api/auth/logout", makeLogoutHandler())
 	app.Get("/api/auth/status", makeStatusHandler(database))
 
-	// ── 登录页静态资源（无需认证） ─────────────────────────
-	app.Get("/login", serveLogin)
-	app.Get("/static/login.css", func(c *fiber.Ctx) error {
-		c.Set("Content-Type", "text/css")
-		data, _ := webFS.ReadFile("web/static/login.css")
+	// ── 预加载 dist 子 FS ──────────────────────────────────
+	distSub, err := fs.Sub(webFS, "web/dist")
+	if err != nil {
+		log.Fatal(err)
+	}
+	staticSub, err := fs.Sub(webFS, "web/static")
+	if err != nil {
+		log.Fatal(err)
+	}
+	indexHTML, _ := fs.ReadFile(distSub, "index.html")
+
+	// ── 无需认证：静态资源 + /login ───────────────────────
+	// /static/* → web/static（icons、manifest 等）
+	app.Use("/static", func(c *fiber.Ctx) error {
+		p := strings.TrimPrefix(c.Path(), "/static/")
+		data, err2 := fs.ReadFile(staticSub, p)
+		if err2 != nil {
+			return c.Status(404).SendString("not found")
+		}
+		setMime(c, p)
 		return c.Send(data)
+	})
+
+	// /assets/* → web/dist/assets（Vite hash 文件）
+	app.Use("/assets", func(c *fiber.Ctx) error {
+		p := strings.TrimPrefix(c.Path(), "/")
+		data, err2 := fs.ReadFile(distSub, p)
+		if err2 != nil {
+			return c.Status(404).SendString("not found")
+		}
+		setMime(c, p)
+		return c.Send(data)
+	})
+
+	// /login → index.html（Vue Router 渲染 LoginView，无需认证）
+	app.Get("/login", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/html; charset=utf-8")
+		return c.Send(indexHTML)
 	})
 
 	// ── 认证中间件（只在 DB 有凭据时启用） ────────────────
@@ -218,58 +249,16 @@ func main() {
 		app.Use(authMiddleware)
 	}
 
-	// ── 静态上传目录 & Web UI ──────────────────────────────
+	// ── 静态上传目录（认证后） ─────────────────────────────
 	app.Static("/uploads", uploadsDir)
 
-	webSub, err := fs.Sub(webFS, "web")
-	if err != nil {
-		log.Fatal(err)
-	}
+	// ── 所有其他前端路由 → index.html（SPA fallback） ─────
 	app.Use("/", func(c *fiber.Ctx) error {
 		if strings.HasPrefix(c.Path(), "/api") {
 			return c.Next()
 		}
-		if c.Path() != "/" {
-			if f, err := webSub.Open(c.Path()[1:]); err == nil {
-				f.Close()
-			} else {
-				c.Set("Content-Type", "text/html")
-				data, _ := webFS.ReadFile("web/index.html")
-				return c.Send(data)
-			}
-		}
-		_ = http.FS(webSub)
-		data, err := webFS.ReadFile("web" + c.Path())
-		if err != nil {
-			data, _ = webFS.ReadFile("web/index.html")
-		}
-		switch filepath.Ext(c.Path()) {
-		case ".js":
-			c.Set("Content-Type", "application/javascript")
-		case ".css":
-			c.Set("Content-Type", "text/css")
-		default:
-			c.Set("Content-Type", "text/html")
-		}
-		return c.Send(data)
-	})
-
-	// ── 笔记独立页面路由 ──────────────────────────────────
-	app.Get("/notes/:id/view", func(c *fiber.Ctx) error {
-		c.Set("Content-Type", "text/html")
-		data, _ := webFS.ReadFile("web/view.html")
-		return c.Send(data)
-	})
-	app.Get("/notes/:id/edit", func(c *fiber.Ctx) error {
-		c.Set("Content-Type", "text/html")
-		data, _ := webFS.ReadFile("web/edit.html")
-		return c.Send(data)
-	})
-	// 新建笔记页面
-	app.Get("/notes/new", func(c *fiber.Ctx) error {
-		c.Set("Content-Type", "text/html")
-		data, _ := webFS.ReadFile("web/edit.html")
-		return c.Send(data)
+		c.Set("Content-Type", "text/html; charset=utf-8")
+		return c.Send(indexHTML)
 	})
 
 	// ── API 路由 ───────────────────────────────────────────
@@ -426,10 +415,25 @@ func authMiddleware(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-func serveLogin(c *fiber.Ctx) error {
-	c.Set("Content-Type", "text/html")
-	data, _ := webFS.ReadFile("web/login.html")
-	return c.Send(data)
+func setMime(c *fiber.Ctx, path string) {
+	switch filepath.Ext(path) {
+	case ".js":
+		c.Set("Content-Type", "application/javascript; charset=utf-8")
+	case ".css":
+		c.Set("Content-Type", "text/css; charset=utf-8")
+	case ".svg":
+		c.Set("Content-Type", "image/svg+xml")
+	case ".png":
+		c.Set("Content-Type", "image/png")
+	case ".ico":
+		c.Set("Content-Type", "image/x-icon")
+	case ".json":
+		c.Set("Content-Type", "application/json")
+	case ".webmanifest":
+		c.Set("Content-Type", "application/manifest+json")
+	default:
+		c.Set("Content-Type", "text/html; charset=utf-8")
+	}
 }
 
 func randomToken() string {
