@@ -23,7 +23,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-//go:embed web/dist web/static
+//go:embed web/dist
 var webFS embed.FS
 
 var version = "dev"
@@ -118,7 +118,6 @@ func main() {
 	var (
 		port    = flag.Int("port", 2344, "监听端口")
 		dir     = flag.String("dir", "./data", "数据目录")
-		auth    = flag.String("auth", "", "启用登录，格式: 用户名:密码  例: noteos:mypass")
 		showVer = flag.Bool("version", false, "显示版本号")
 	)
 	flag.Parse()
@@ -128,32 +127,18 @@ func main() {
 		os.Exit(0)
 	}
 
-	// ── 解析 --auth user:pass，优先用环境变量 NOTEOS_AUTH ──
-	if *auth == "" {
-		*auth = os.Getenv("NOTEOS_AUTH")
-	}
-	var authUser, authPass string
-	if *auth != "" {
-		parts := strings.SplitN(*auth, ":", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			log.Fatal("--auth 格式错误，应为  用户名:密码  例: noteos:mypass")
-		}
-		authUser = parts[0]
-		authPass = parts[1]
-	}
-
 	// ── 初始化数据库 ───────────────────────────────────────
 	database, err := db.New(*dir)
 	if err != nil {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
 
-	// ── 存储凭据 ───────────────────────────────────────────
-	if authUser != "" {
-		if err := database.SetCredential(authUser, authPass); err != nil {
-			log.Fatalf("保存登录信息失败: %v", err)
+	// ── 首次启动：自动初始化默认账号 admin/admin ──────────
+	if !database.HasCredential() {
+		if err := database.SetCredential("admin", "admin"); err != nil {
+			log.Fatalf("初始化默认凭据失败: %v", err)
 		}
-		log.Printf("🔒 已启用登录保护  用户名: %s", authUser)
+		log.Printf("🔑 首次启动，默认账号: admin / admin，请登录后修改")
 	}
 
 	// ── Session Store（SQLite 持久化，重启后会话不丢失） ───
@@ -210,24 +195,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	staticSub, err := fs.Sub(webFS, "web/static")
-	if err != nil {
-		log.Fatal(err)
-	}
 	indexHTML, _ := fs.ReadFile(distSub, "index.html")
 
 	// ── 无需认证：静态资源 + /login ───────────────────────
-	// /static/* → web/static（icons、manifest 等）
-	app.Use("/static", func(c *fiber.Ctx) error {
-		p := strings.TrimPrefix(c.Path(), "/static/")
-		data, err2 := fs.ReadFile(staticSub, p)
-		if err2 != nil {
-			return c.Status(404).SendString("not found")
-		}
-		setMime(c, p)
-		return c.Send(data)
-	})
-
 	// /assets/* → web/dist/assets（Vite hash 文件）
 	app.Use("/assets", func(c *fiber.Ctx) error {
 		p := strings.TrimPrefix(c.Path(), "/")
@@ -274,6 +244,10 @@ func main() {
 	apiv1.Delete("/notes/:id/files/:filename", h.DeleteFile)
 	apiv1.Get("/tags", h.ListTags)
 	apiv1.Get("/export/markdown", h.ExportMarkdown)
+
+	// ── 账号设置 ───────────────────────────────────────────
+	app.Get("/api/settings/account", makeGetAccountHandler(database))
+	app.Put("/api/settings/account", makeUpdateAccountHandler(database))
 
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("🚀 NoteOS %s  http://0.0.0.0%s", version, addr)
@@ -333,19 +307,22 @@ func makeLoginHandler(database *db.DB) fiber.Handler {
 		}
 
 		var body struct {
-			Username string `json:"username"`
 			Password string `json:"password"`
 		}
-		if err := c.BodyParser(&body); err != nil {
+		if err := c.BodyParser(&body); err != nil || body.Password == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "参数错误"})
 		}
 
-		hash, err := database.GetCredentialHash(body.Username)
+		// 单用户系统：自动获取唯一用户名，只验证密码
+		username, err := database.GetUsername()
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "系统错误"})
+		}
+		hash, err := database.GetCredentialHash(username)
 		if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)) != nil {
 			recordLoginFail(ip)
-			// 固定延迟防时序攻击
 			time.Sleep(300 * time.Millisecond)
-			return c.Status(401).JSON(fiber.Map{"error": "用户名或密码错误"})
+			return c.Status(401).JSON(fiber.Map{"error": "密码错误"})
 		}
 
 		// 登录成功，重置限速
@@ -356,7 +333,7 @@ func makeLoginHandler(database *db.DB) fiber.Handler {
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "session 错误"})
 		}
-		sess.Set("user", body.Username)
+		sess.Set("user", username)
 		if err := sess.Save(); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "session 保存失败"})
 		}
@@ -372,7 +349,7 @@ func makeLoginHandler(database *db.DB) fiber.Handler {
 			MaxAge:   86400,
 		})
 
-		return c.JSON(fiber.Map{"ok": true, "username": body.Username})
+		return c.JSON(fiber.Map{"ok": true, "username": username})
 	}
 }
 
@@ -443,8 +420,7 @@ func makeCsrfRefreshHandler(database *db.DB) fiber.Handler {
 func authMiddleware(c *fiber.Ctx) error {
 	path := c.Path()
 	if strings.HasPrefix(path, "/api/auth/") ||
-		path == "/login" ||
-		strings.HasPrefix(path, "/static/") {
+		path == "/login" {
 		return c.Next()
 	}
 	sess, err := sessionStore.Get(c)
@@ -482,4 +458,64 @@ func randomToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// ── 账号设置 handlers ──────────────────────────────────────────────────────
+
+func makeGetAccountHandler(database *db.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		username, err := database.GetUsername()
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "获取账号信息失败"})
+		}
+		return c.JSON(fiber.Map{"username": username})
+	}
+}
+
+func makeUpdateAccountHandler(database *db.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req struct {
+			CurrentPassword string `json:"current_password"`
+			NewUsername     string `json:"new_username"`
+			NewPassword     string `json:"new_password"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "请求格式错误"})
+		}
+		if req.CurrentPassword == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "请输入当前密码"})
+		}
+		if req.NewUsername == "" && req.NewPassword == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "请至少修改用户名或密码"})
+		}
+
+		// 获取当前用户名
+		oldUsername, err := database.GetUsername()
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "获取账号信息失败"})
+		}
+
+		// 验证当前密码
+		hash, err := database.GetCredentialHash(oldUsername)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "验证失败"})
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)); err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "当前密码错误"})
+		}
+
+		// 执行更新
+		if err := database.UpdateCredential(oldUsername, req.NewUsername, req.NewPassword); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "更新失败: " + err.Error()})
+		}
+
+		// 用户名变更时刷新 session
+		if req.NewUsername != "" && req.NewUsername != oldUsername {
+			sess, _ := sessionStore.Get(c)
+			sess.Set("user", req.NewUsername)
+			sess.Save()
+		}
+
+		return c.JSON(fiber.Map{"ok": true})
+	}
 }
